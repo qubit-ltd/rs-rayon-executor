@@ -1,0 +1,29 @@
+[package]
+name = "qubit-rayon-executor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+authors = ["Haixing Hu <starfish.hu@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/qubit-ltd/rs-rayon-executor"
+description = "Rayon-backed CPU-bound executor service for Qubit Rust libraries"
+homepage = "https://github.com/qubit-ltd/rs-rayon-executor"
+documentation = "https://docs.rs/qubit-rayon-executor"
+readme = "README.md"
+keywords = ["rayon", "executor", "cpu", "concurrency"]
+categories = ["concurrency"]
+
+[lib]
+name = "qubit_rayon_executor"
+doctest = true
+
+[dependencies]
+qubit-atomic = { path = "../rs-atomic" }
+qubit-executor = { path = "../rs-executor" }
+qubit-function = { path = "../rs-function" }
+rayon = "1.12"
+thiserror = "2.0"
+tokio = { version = "1.52", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
