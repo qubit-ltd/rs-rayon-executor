@@ -1,1 +1,1 @@
-mod rayon_executor_service_tests;
+// Integration tests live in separate files under this directory.

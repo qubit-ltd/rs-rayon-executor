@@ -12,18 +12,28 @@ documentation = "https://docs.rs/qubit-rayon-executor"
 readme = "README.md"
 keywords = ["rayon", "executor", "cpu", "concurrency"]
 categories = ["concurrency"]
+exclude = [
+    "coverage.sh",
+    "COVERAGE.md",
+    "COVERAGE.zh_CN.md",
+    ".circleci/*",
+    "ci-check.sh",
+    ".llvm-cov.toml",
+    ".cargo-audit.toml.example",
+]
 
 [lib]
 name = "qubit_rayon_executor"
 doctest = true
 
 [dependencies]
-qubit-atomic = { path = "../rs-atomic" }
-qubit-executor = { path = "../rs-executor" }
-qubit-function = { path = "../rs-function" }
 rayon = "1.12"
 thiserror = "2.0"
 tokio = { version = "1.52", features = ["sync"] }
+
+qubit-atomic = "0.10"
+qubit-executor = "0.1"
+qubit-function = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }

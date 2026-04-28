@@ -55,15 +55,17 @@ use std::io;
 
 use qubit_rayon_executor::{ExecutorService, RayonExecutorService};
 
-let service = RayonExecutorService::builder()
-    .num_threads(4)
-    .thread_name_prefix("cpu-worker")
-    .build()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder()
+        .num_threads(4)
+        .thread_name_prefix("cpu-worker")
+        .build()?;
 
-let handle = service.submit_callable(|| Ok::<usize, io::Error>((1..=10).sum()))?;
-assert_eq!(handle.get()?, 55);
-service.shutdown();
-# Ok::<(), Box<dyn std::error::Error>>(())
+    let handle = service.submit_callable(|| Ok::<usize, io::Error>((1..=10).sum()))?;
+    assert_eq!(handle.get()?, 55);
+    service.shutdown();
+    Ok(())
+}
 ```
 
 ## Choosing an Executor
