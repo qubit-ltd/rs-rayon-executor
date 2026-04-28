@@ -1,6 +1,6 @@
 [package]
 name = "qubit-rayon-executor"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -31,15 +31,9 @@ rayon = "1.12"
 thiserror = "2.0"
 tokio = { version = "1.52", features = ["sync"] }
 
-qubit-atomic = { version = "0.10", path = "../rs-atomic" }
-qubit-executor = { version = "0.1", path = "../rs-executor" }
-qubit-function = { version = "0.11", path = "../rs-function" }
+qubit-atomic = "0.10"
+qubit-executor = "0.1"
+qubit-function = "0.11"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
-
-[patch.crates-io]
-qubit-atomic = { path = "../rs-atomic" }
-qubit-executor = { path = "../rs-executor" }
-qubit-function = { path = "../rs-function" }
-qubit-lock = { path = "../rs-lock" }
