@@ -24,7 +24,7 @@ use qubit_executor::service::{
 
 use qubit_rayon_executor::RayonExecutorService;
 
-use crate::common::{
+use crate::common::helpers::{
     create_runtime,
     create_single_worker_service,
     ok_unit_task,

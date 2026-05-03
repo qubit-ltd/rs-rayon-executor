@@ -20,7 +20,7 @@ use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
-use crate::common::{
+use crate::common::helpers::{
     create_runtime,
     create_single_worker_service,
     ok_usize_task,

@@ -19,7 +19,7 @@ use qubit_rayon_executor::{
     RayonExecutorServiceBuildError,
 };
 
-use crate::common::create_runtime;
+use crate::common::helpers::create_runtime;
 
 #[test]
 fn test_rayon_executor_service_builder_validates_configuration() {
