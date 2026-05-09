@@ -1,6 +1,6 @@
 [package]
 name = "qubit-rayon-executor"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -33,7 +33,7 @@ tokio = { version = "1.52", features = ["sync"] }
 
 qubit-atomic = "0.10"
 qubit-executor = "0.1"
-qubit-function = "0.11"
+qubit-function = "0.12"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
