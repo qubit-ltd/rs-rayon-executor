@@ -11,21 +11,14 @@
 
 mod common;
 
-use std::{
-    io,
-    sync::mpsc,
-};
+use std::{io, sync::mpsc};
 
-use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
+use qubit_executor::{CancelResult, TaskExecutionError};
 use qubit_rayon_executor::RayonExecutorService;
 
 use crate::common::helpers::{
-    create_runtime,
-    create_single_worker_service,
-    ok_usize_task,
-    wait_started,
-    wait_until,
+    create_runtime, create_single_worker_service, ok_usize_task, wait_started, wait_until,
 };
 
 #[tokio::test]
@@ -48,7 +41,7 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
     let (release_tx, release_rx) = mpsc::channel();
 
     let first = service
-        .submit(move || {
+        .submit_tracked(move || {
             started_tx
                 .send(())
                 .expect("test should receive task start signal");
@@ -60,10 +53,10 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
         .expect("first task should be accepted");
     wait_started(started_rx);
     let queued = service
-        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
 
-    assert!(queued.cancel());
+    assert_eq!(queued.cancel(), CancelResult::Cancelled);
     assert!(queued.is_done());
     assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     service.shutdown();
@@ -79,7 +72,7 @@ fn test_rayon_task_handle_reports_panicked_task() {
     let service = RayonExecutorService::new().expect("service should be created");
 
     let handle = service
-        .submit(|| -> Result<(), io::Error> { panic!("rayon service panic") })
+        .submit_tracked(|| -> Result<(), io::Error> { panic!("rayon service panic") })
         .expect("service should accept panicking task");
 
     assert!(matches!(handle.get(), Err(TaskExecutionError::Panicked)));
@@ -91,11 +84,11 @@ fn test_rayon_task_handle_reports_panicked_task() {
 fn test_rayon_task_handle_cancel_after_completion_returns_false() {
     let service = create_single_worker_service();
     let handle = service
-        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
     wait_until(|| handle.is_done());
-    assert!(!handle.cancel());
+    assert_eq!(handle.cancel(), CancelResult::AlreadyFinished);
     assert_eq!(handle.get().expect("callable should complete"), 42);
     service.shutdown();
     create_runtime().block_on(service.await_termination());

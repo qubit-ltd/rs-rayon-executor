@@ -11,30 +11,24 @@
 
 mod common;
 
-use std::{
-    io,
-    sync::mpsc,
-};
+use std::{io, sync::mpsc};
 
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
 use crate::common::helpers::{
-    create_runtime,
-    create_single_worker_service,
-    ok_usize_task,
-    wait_started,
+    create_runtime, create_single_worker_service, ok_usize_task, wait_started,
 };
 
 #[test]
-fn test_rayon_executor_service_state_shutdown_now_reports_running_and_queued() {
+fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     let service = create_single_worker_service();
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
 
     let running = service
-        .submit(move || {
+        .submit_tracked(move || {
             started_tx
                 .send(())
                 .expect("test should receive task start signal");
@@ -49,7 +43,7 @@ fn test_rayon_executor_service_state_shutdown_now_reports_running_and_queued() {
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
 
-    let report = service.shutdown_now();
+    let report = service.stop();
 
     assert_eq!(report.running, 1);
     assert_eq!(report.queued, 1);

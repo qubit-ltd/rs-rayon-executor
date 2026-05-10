@@ -20,9 +20,10 @@ mod rayon_executor_service_state;
 mod rayon_task_handle;
 
 pub use qubit_executor::service::{
-    ExecutorService,
-    RejectedExecution,
-    ShutdownReport,
+    ExecutorService, ExecutorServiceLifecycle, RejectedExecution, StopReport,
+};
+pub use qubit_executor::{
+    CancelResult, TaskHandle, TaskResult, TaskResultHandle, TaskStatus, TrackedTaskHandle, TryGet,
 };
 pub use rayon_executor_service::RayonExecutorService;
 pub use rayon_executor_service_build_error::RayonExecutorServiceBuildError;
@@ -32,12 +33,9 @@ pub use rayon_task_handle::RayonTaskHandle;
 /// Executor service compatibility exports for Rayon-backed users.
 pub mod service {
     pub use crate::{
-        ExecutorService,
-        RayonExecutorService,
-        RayonExecutorServiceBuildError,
-        RayonExecutorServiceBuilder,
-        RayonTaskHandle,
-        RejectedExecution,
-        ShutdownReport,
+        CancelResult, ExecutorService, ExecutorServiceLifecycle, RayonExecutorService,
+        RayonExecutorServiceBuildError, RayonExecutorServiceBuilder, RayonTaskHandle,
+        RejectedExecution, StopReport, TaskHandle, TaskResult, TaskResultHandle, TaskStatus,
+        TrackedTaskHandle, TryGet,
     };
 }

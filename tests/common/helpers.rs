@@ -9,11 +9,7 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
-use std::{
-    io,
-    sync::mpsc,
-    time::Duration,
-};
+use std::{io, sync::mpsc, time::Duration};
 
 use qubit_rayon_executor::RayonExecutorService;
 

@@ -11,25 +11,15 @@
 
 mod common;
 
-use std::{
-    io,
-    sync::mpsc,
-};
+use std::{io, sync::mpsc};
 
 use qubit_executor::TaskExecutionError;
-use qubit_executor::service::{
-    ExecutorService,
-    RejectedExecution,
-};
+use qubit_executor::service::{ExecutorService, RejectedExecution};
 
 use qubit_rayon_executor::RayonExecutorService;
 
 use crate::common::helpers::{
-    create_runtime,
-    create_single_worker_service,
-    ok_unit_task,
-    ok_usize_task,
-    wait_started,
+    create_runtime, create_single_worker_service, ok_unit_task, ok_usize_task, wait_started,
 };
 
 #[test]
@@ -37,13 +27,13 @@ fn test_rayon_executor_service_submit_acceptance_is_not_task_success() {
     let service = RayonExecutorService::new().expect("service should be created");
 
     service
-        .submit(ok_unit_task as fn() -> Result<(), io::Error>)
+        .submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>)
         .expect("service should accept shared runnable")
         .get()
         .expect("shared runnable should complete successfully");
 
     let handle = service
-        .submit(|| Err::<(), _>(io::Error::other("task failed")))
+        .submit_tracked(|| Err::<(), _>(io::Error::other("task failed")))
         .expect("service should accept runnable");
 
     let err = handle
@@ -75,22 +65,22 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
     let service = RayonExecutorService::new().expect("service should be created");
 
     service.shutdown();
-    let result = service.submit(ok_unit_task as fn() -> Result<(), io::Error>);
+    let result = service.submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>);
 
     assert!(matches!(result, Err(RejectedExecution::Shutdown)));
     create_runtime().block_on(service.await_termination());
-    assert!(service.is_shutdown());
+    assert!(service.is_not_running());
     assert!(service.is_terminated());
 }
 
 #[test]
-fn test_rayon_executor_service_shutdown_now_cancels_queued_tasks() {
+fn test_rayon_executor_service_stop_cancels_queued_tasks() {
     let service = create_single_worker_service();
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
 
     let first = service
-        .submit(move || {
+        .submit_tracked(move || {
             started_tx
                 .send(())
                 .expect("test should receive task start signal");
@@ -105,7 +95,7 @@ fn test_rayon_executor_service_shutdown_now_cancels_queued_tasks() {
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
 
-    let report = service.shutdown_now();
+    let report = service.stop();
 
     assert_eq!(report.queued, 1);
     assert_eq!(report.running, 1);
@@ -120,13 +110,13 @@ fn test_rayon_executor_service_shutdown_now_cancels_queued_tasks() {
 }
 
 #[test]
-fn test_rayon_executor_service_shutdown_now_reports_all_queued_tasks() {
+fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
     let service = create_single_worker_service();
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
 
     let first = service
-        .submit(move || {
+        .submit_tracked(move || {
             started_tx
                 .send(())
                 .expect("test should receive task start signal");
@@ -145,7 +135,7 @@ fn test_rayon_executor_service_shutdown_now_reports_all_queued_tasks() {
         })
         .collect::<Vec<_>>();
 
-    let report = service.shutdown_now();
+    let report = service.stop();
 
     assert_eq!(report.queued, 3);
     assert_eq!(report.running, 1);
