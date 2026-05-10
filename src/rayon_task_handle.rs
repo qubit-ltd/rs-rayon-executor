@@ -7,33 +7,25 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{
-        Context,
-        Poll,
-    },
-};
+use std::{future::IntoFuture, sync::Arc};
 
 use qubit_executor::{
-    TaskHandle,
-    TaskResult,
+    CancelResult, TaskHandleFuture, TaskResult, TaskResultHandle, TaskStatus, TrackedTask,
+    TrackedTaskHandle, TryGet,
 };
 
 use crate::{
-    pending_cancel::PendingCancel,
-    rayon_executor_service_state::RayonExecutorServiceState,
+    pending_cancel::PendingCancel, rayon_executor_service_state::RayonExecutorServiceState,
 };
 
-/// Handle returned by [`crate::RayonExecutorService`] for accepted tasks.
+/// Tracked handle returned by [`crate::RayonExecutorService`] for accepted tasks.
 ///
-/// This handle supports blocking [`Self::get`], asynchronous `.await`, and
-/// best-effort cancellation before a Rayon worker starts the task.
+/// This handle supports blocking [`Self::get`], asynchronous `.await`, status
+/// inspection, and best-effort cancellation before a Rayon worker starts the
+/// task.
 pub struct RayonTaskHandle<R, E> {
-    /// Shared task result observed through blocking and async APIs.
-    inner: TaskHandle<R, E>,
+    /// Shared task result and status observed through blocking and async APIs.
+    inner: TrackedTask<R, E>,
     /// Stable identifier assigned by the owning executor service.
     task_id: usize,
     /// Shared service state used to keep cancellation counters consistent.
@@ -43,20 +35,20 @@ pub struct RayonTaskHandle<R, E> {
 }
 
 impl<R, E> RayonTaskHandle<R, E> {
-    /// Creates a Rayon task handle from a shared task handle and cancel hook.
+    /// Creates a Rayon task handle from a tracked task and cancel hook.
     ///
     /// # Parameters
     ///
-    /// * `inner` - Shared task handle used for result observation.
+    /// * `inner` - Tracked task used for result and status observation.
     /// * `task_id` - Stable identifier assigned to the accepted task.
     /// * `state` - Shared service state that owns lifecycle counters.
     /// * `cancel` - Cancellation hook that may cancel the task before start.
     ///
     /// # Returns
     ///
-    /// A handle for the accepted Rayon task.
+    /// A tracked handle for the accepted Rayon task.
     pub(crate) fn new(
-        inner: TaskHandle<R, E>,
+        inner: TrackedTask<R, E>,
         task_id: usize,
         state: Arc<RayonExecutorServiceState>,
         cancel: PendingCancel,
@@ -73,21 +65,42 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// # Returns
     ///
-    /// The final task result reported through the underlying [`TaskHandle`].
+    /// The final task result reported through the underlying tracked task.
     #[inline]
-    pub fn get(self) -> TaskResult<R, E> {
+    pub fn get(self) -> TaskResult<R, E>
+    where
+        R: Send,
+        E: Send,
+    {
         self.inner.get()
+    }
+
+    /// Attempts to retrieve the final result without blocking.
+    ///
+    /// # Returns
+    ///
+    /// A ready result or the pending Rayon task handle.
+    #[inline]
+    pub fn try_get(self) -> TryGet<Self, R, E>
+    where
+        R: Send,
+        E: Send,
+    {
+        <Self as TaskResultHandle<R, E>>::try_get(self)
     }
 
     /// Attempts to cancel the task before any Rayon worker starts it.
     ///
     /// # Returns
     ///
-    /// `true` if the task was cancelled before start, or `false` if it had
-    /// already started or completed.
+    /// The observed cancellation outcome.
     #[inline]
-    pub fn cancel(&self) -> bool {
-        self.state.cancel_pending_task(self.task_id, &self.cancel)
+    pub fn cancel(&self) -> CancelResult
+    where
+        R: Send,
+        E: Send,
+    {
+        <Self as TrackedTaskHandle<R, E>>::cancel(self)
     }
 
     /// Returns whether the task has reported completion.
@@ -96,26 +109,95 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// `true` after the task has finished or has been cancelled.
     #[inline]
-    pub fn is_done(&self) -> bool {
-        self.inner.is_done()
+    pub fn is_done(&self) -> bool
+    where
+        R: Send,
+        E: Send,
+    {
+        <Self as TaskResultHandle<R, E>>::is_done(self)
     }
-}
 
-impl<R, E> Future for RayonTaskHandle<R, E> {
-    type Output = TaskResult<R, E>;
-
-    /// Polls the accepted Rayon task for completion.
-    ///
-    /// # Parameters
-    ///
-    /// * `cx` - Async task context used to register the current waker.
+    /// Returns the currently observed task status.
     ///
     /// # Returns
     ///
-    /// `Poll::Ready` with the task result after completion, or
-    /// `Poll::Pending` while the task is still running or queued.
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        Pin::new(&mut this.inner).poll(cx)
+    /// The task's pending, running, or terminal status.
+    #[inline]
+    pub fn status(&self) -> TaskStatus {
+        self.inner.status()
+    }
+}
+
+impl<R, E> TaskResultHandle<R, E> for RayonTaskHandle<R, E>
+where
+    R: Send,
+    E: Send,
+{
+    /// Returns whether the inner tracked task is done.
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.inner.is_done()
+    }
+
+    /// Blocks until the inner tracked task yields a final result.
+    #[inline]
+    fn get(self) -> TaskResult<R, E> {
+        self.inner.get()
+    }
+
+    /// Attempts to retrieve the inner tracked task result without blocking.
+    #[inline]
+    fn try_get(self) -> TryGet<Self, R, E> {
+        let Self {
+            inner,
+            task_id,
+            state,
+            cancel,
+        } = self;
+        match inner.try_get() {
+            TryGet::Ready(result) => TryGet::Ready(result),
+            TryGet::Pending(inner) => TryGet::Pending(Self {
+                inner,
+                task_id,
+                state,
+                cancel,
+            }),
+        }
+    }
+}
+
+impl<R, E> TrackedTaskHandle<R, E> for RayonTaskHandle<R, E>
+where
+    R: Send,
+    E: Send,
+{
+    /// Returns the currently observed task status.
+    #[inline]
+    fn status(&self) -> TaskStatus {
+        self.inner.status()
+    }
+
+    /// Cancels the task through the owning service state.
+    #[inline]
+    fn cancel(&self) -> CancelResult {
+        if self.state.cancel_pending_task(self.task_id, &self.cancel) {
+            return CancelResult::Cancelled;
+        }
+        match self.status() {
+            TaskStatus::Pending => CancelResult::Unsupported,
+            TaskStatus::Running => CancelResult::AlreadyRunning,
+            _ => CancelResult::AlreadyFinished,
+        }
+    }
+}
+
+impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
+    type Output = TaskResult<R, E>;
+    type IntoFuture = TaskHandleFuture<R, E>;
+
+    /// Converts this handle into a future resolving to the task result.
+    #[inline]
+    fn into_future(self) -> Self::IntoFuture {
+        self.inner.into_future()
     }
 }

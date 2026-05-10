@@ -22,9 +22,9 @@ libraries can depend only on the execution model they need.
 
 - `RayonExecutorService` for managed CPU-bound task execution.
 - `RayonExecutorServiceBuilder` for configuring worker count, thread-name prefix, and stack size.
-- `RayonTaskHandle` with blocking `get`, async waiting, cancellation before start, and completion checks.
+- `TaskHandle` for callable results and `RayonTaskHandle` for tracked status and cancellation.
 - `RayonExecutorServiceBuildError` for zero thread count, zero stack size, and Rayon build failures.
-- Shared `ExecutorService`, `RejectedExecution`, and `ShutdownReport` re-exports for convenient imports.
+- Shared `ExecutorService`, `RejectedExecution`, and `StopReport` re-exports for convenient imports.
 - Lifecycle behavior aligned with other Qubit executor services.
 
 ## CPU-Bound Workloads
@@ -40,11 +40,13 @@ your task is an async future or must integrate with Tokio, prefer
 
 ## Shutdown and Cancellation
 
-A successful `submit` or `submit_callable` means the task was accepted by the
-service. The final task result is reported through `RayonTaskHandle`.
+A successful `submit` means the service accepted a fire-and-forget runnable.
+Use `submit_callable` for a result-only `TaskHandle`, or
+`submit_tracked` / `submit_tracked_callable` when you need a `RayonTaskHandle`
+with status and cancellation.
 
 Queued tasks can be cancelled before Rayon starts running them. `shutdown` stops
-accepting new tasks and allows accepted work to finish. `shutdown_now` stops
+accepting new tasks and allows accepted work to finish. `stop` stops
 accepting new tasks and cancels work that has not started yet; already running
 CPU work is not forcibly stopped.
 

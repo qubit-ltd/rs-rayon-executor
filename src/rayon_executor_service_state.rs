@@ -10,30 +10,21 @@
 use std::{
     collections::HashMap,
     sync::{
-        Mutex,
-        MutexGuard,
-        atomic::{
-            AtomicUsize,
-            Ordering,
-        },
+        Mutex, MutexGuard,
+        atomic::{AtomicU8, AtomicUsize, Ordering},
     },
 };
 
-use qubit_atomic::{
-    Atomic,
-    AtomicCount,
-};
-use tokio::sync::{
-    Notify,
-    futures::Notified,
-};
+use qubit_atomic::AtomicCount;
+use qubit_executor::service::ExecutorServiceLifecycle;
+use tokio::sync::{Notify, futures::Notified};
 
 use crate::pending_cancel::PendingCancel;
 
 /// Shared state for [`crate::RayonExecutorService`].
 pub(crate) struct RayonExecutorServiceState {
-    /// Whether shutdown has been requested.
-    shutdown: Atomic<bool>,
+    /// Stored lifecycle state before derived termination.
+    lifecycle: AtomicU8,
     /// Number of accepted tasks that have not yet completed or been cancelled.
     active_tasks: AtomicCount,
     /// Number of accepted tasks that have not started running yet.
@@ -56,7 +47,7 @@ impl RayonExecutorServiceState {
     /// Shared service state with zero accepted tasks and running lifecycle.
     pub(crate) fn new() -> Self {
         Self {
-            shutdown: Atomic::new(false),
+            lifecycle: AtomicU8::new(ExecutorServiceLifecycle::Running as u8),
             active_tasks: AtomicCount::new(0),
             queued_tasks: AtomicCount::new(0),
             submission_lock: Mutex::new(()),
@@ -88,14 +79,40 @@ impl RayonExecutorServiceState {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Returns whether shutdown has been requested.
-    pub(crate) fn is_shutdown(&self) -> bool {
-        self.shutdown.load()
+    /// Returns the stored lifecycle state.
+    fn stored_lifecycle(&self) -> ExecutorServiceLifecycle {
+        lifecycle_from_u8(self.lifecycle.load(Ordering::Acquire))
+    }
+
+    /// Returns the observed lifecycle state.
+    pub(crate) fn lifecycle(&self) -> ExecutorServiceLifecycle {
+        let lifecycle = self.stored_lifecycle();
+        if lifecycle != ExecutorServiceLifecycle::Running && self.has_no_active_tasks() {
+            ExecutorServiceLifecycle::Terminated
+        } else {
+            lifecycle
+        }
+    }
+
+    /// Returns whether shutdown or stop has been requested.
+    pub(crate) fn is_not_running(&self) -> bool {
+        self.stored_lifecycle() != ExecutorServiceLifecycle::Running
     }
 
     /// Marks the service as shutting down.
     pub(crate) fn shutdown(&self) {
-        self.shutdown.store(true);
+        let _ = self
+            .lifecycle
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (lifecycle_from_u8(current) == ExecutorServiceLifecycle::Running)
+                    .then_some(ExecutorServiceLifecycle::ShuttingDown as u8)
+            });
+    }
+
+    /// Marks the service as stopping.
+    pub(crate) fn stop(&self) {
+        self.lifecycle
+            .store(ExecutorServiceLifecycle::Stopping as u8, Ordering::Release);
     }
 
     /// Returns whether no accepted task remains active.
@@ -165,7 +182,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` if the pending task was cancelled by this call, or `false` if it
-    /// had already started, completed, or been drained by `shutdown_now`.
+    /// had already started, completed, or been drained by `stop`.
     pub(crate) fn cancel_pending_task(&self, task_id: usize, cancel: &PendingCancel) -> bool {
         let should_notify = {
             let mut pending_tasks = self.lock_pending_tasks();
@@ -243,7 +260,7 @@ impl RayonExecutorServiceState {
 
     /// Wakes termination waiters when shutdown and task completion allow it.
     pub(crate) fn notify_if_terminated(&self) {
-        if self.is_shutdown() && self.has_no_active_tasks() {
+        if self.is_not_running() && self.has_no_active_tasks() {
             self.terminated_notify.notify_waiters();
         }
     }
@@ -256,5 +273,14 @@ impl RayonExecutorServiceState {
     /// has not yet been polled.
     pub(crate) fn notified(&self) -> Notified<'_> {
         self.terminated_notify.notified()
+    }
+}
+
+fn lifecycle_from_u8(value: u8) -> ExecutorServiceLifecycle {
+    match value {
+        0 => ExecutorServiceLifecycle::Running,
+        1 => ExecutorServiceLifecycle::ShuttingDown,
+        2 => ExecutorServiceLifecycle::Stopping,
+        _ => ExecutorServiceLifecycle::Terminated,
     }
 }

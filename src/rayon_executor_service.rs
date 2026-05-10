@@ -7,32 +7,22 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use qubit_function::Callable;
+use qubit_function::{Callable, Runnable};
 use rayon::ThreadPool as RayonThreadPool;
 
-use qubit_executor::{
-    TaskCompletionPair,
-    TaskRunner,
-};
+use qubit_executor::{TaskCompletionPair, TaskHandle, TaskRunner};
 
 use qubit_executor::service::{
-    ExecutorService,
-    RejectedExecution,
-    ShutdownReport,
+    ExecutorService, ExecutorServiceLifecycle, RejectedExecution, StopReport,
 };
 
 use crate::{
     pending_cancel::PendingCancel,
     rayon_executor_service_build_error::RayonExecutorServiceBuildError,
     rayon_executor_service_builder::RayonExecutorServiceBuilder,
-    rayon_executor_service_state::RayonExecutorServiceState,
-    rayon_task_handle::RayonTaskHandle,
+    rayon_executor_service_state::RayonExecutorServiceState, rayon_task_handle::RayonTaskHandle,
 };
 
 /// Rayon-backed executor service for CPU-bound synchronous tasks.
@@ -77,7 +67,13 @@ impl RayonExecutorService {
 }
 
 impl ExecutorService for RayonExecutorService {
-    type Handle<R, E>
+    type ResultHandle<R, E>
+        = TaskHandle<R, E>
+    where
+        R: Send + 'static,
+        E: Send + 'static;
+
+    type TrackedHandle<R, E>
         = RayonTaskHandle<R, E>
     where
         R: Send + 'static,
@@ -87,6 +83,35 @@ impl ExecutorService for RayonExecutorService {
         = Pin<Box<dyn Future<Output = ()> + Send + 'a>>
     where
         Self: 'a;
+
+    /// Accepts a runnable and schedules it on the Rayon thread pool.
+    fn submit<T, E>(&self, task: T) -> Result<(), RejectedExecution>
+    where
+        T: Runnable<E> + Send + 'static,
+        E: Send + 'static,
+    {
+        let submission_guard = self.state.lock_submission();
+        if self.state.is_not_running() {
+            return Err(RejectedExecution::Shutdown);
+        }
+        let task_id = self.state.next_task_id();
+        self.state.on_task_accepted();
+        let cancel: PendingCancel = Arc::new(|| true);
+        self.state
+            .register_pending_task(task_id, Arc::clone(&cancel));
+        drop(submission_guard);
+
+        let state_for_run = Arc::clone(&self.state);
+        self.pool.spawn_fifo(move || {
+            if !state_for_run.start_pending_task(task_id, || true) {
+                return;
+            }
+            let mut task = task;
+            let _ignored = TaskRunner::new(move || task.run()).call::<(), E>();
+            state_for_run.on_task_completed();
+        });
+        Ok(())
+    }
 
     /// Accepts a callable and schedules it on the Rayon thread pool.
     ///
@@ -102,19 +127,57 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`RejectedExecution::Shutdown`] if shutdown has already been
     /// requested before the task is accepted.
-    fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::Handle<R, E>, RejectedExecution>
+    fn submit_callable<C, R, E>(
+        &self,
+        task: C,
+    ) -> Result<Self::ResultHandle<R, E>, RejectedExecution>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
         E: Send + 'static,
     {
         let submission_guard = self.state.lock_submission();
-        if self.state.is_shutdown() {
+        if self.state.is_not_running() {
             return Err(RejectedExecution::Shutdown);
         }
         let task_id = self.state.next_task_id();
         self.state.on_task_accepted();
         let (handle, completion) = TaskCompletionPair::new().into_parts();
+        let completion_for_cancel = completion.clone();
+        let cancel: PendingCancel = Arc::new(move || completion_for_cancel.cancel());
+        self.state
+            .register_pending_task(task_id, Arc::clone(&cancel));
+        drop(submission_guard);
+
+        let completion_for_run = completion;
+        let state_for_run = Arc::clone(&self.state);
+        self.pool.spawn_fifo(move || {
+            if !state_for_run.start_pending_task(task_id, || completion_for_run.start()) {
+                return;
+            }
+            completion_for_run.complete(TaskRunner::new(task).call());
+            state_for_run.on_task_completed();
+        });
+        Ok(handle)
+    }
+
+    /// Accepts a callable and schedules it with a tracked handle.
+    fn submit_tracked_callable<C, R, E>(
+        &self,
+        task: C,
+    ) -> Result<Self::TrackedHandle<R, E>, RejectedExecution>
+    where
+        C: Callable<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let submission_guard = self.state.lock_submission();
+        if self.state.is_not_running() {
+            return Err(RejectedExecution::Shutdown);
+        }
+        let task_id = self.state.next_task_id();
+        self.state.on_task_accepted();
+        let (handle, completion) = TaskCompletionPair::new().into_tracked_parts();
         let completion_for_cancel = completion.clone();
         let cancel: PendingCancel = Arc::new(move || completion_for_cancel.cancel());
         self.state
@@ -158,24 +221,29 @@ impl ExecutorService for RayonExecutorService {
     /// A count-based report describing the pending and running work observed at
     /// the time of the shutdown request, plus the number of pending tasks for
     /// which cancellation succeeded.
-    fn shutdown_now(&self) -> ShutdownReport {
+    fn stop(&self) -> StopReport {
         let _guard = self.state.lock_submission();
-        self.state.shutdown();
+        self.state.stop();
         let (queued, running, pending) = self.state.drain_pending_tasks_for_shutdown();
         drop(_guard);
 
         let cancelled = self.state.cancel_drained_pending_tasks(pending);
-        ShutdownReport::new(queued, running, cancelled)
+        StopReport::new(queued, running, cancelled)
+    }
+
+    /// Returns the current lifecycle state.
+    fn lifecycle(&self) -> ExecutorServiceLifecycle {
+        self.state.lifecycle()
     }
 
     /// Returns whether shutdown has been requested.
-    fn is_shutdown(&self) -> bool {
-        self.state.is_shutdown()
+    fn is_not_running(&self) -> bool {
+        self.state.is_not_running()
     }
 
     /// Returns whether shutdown was requested and no accepted tasks remain.
     fn is_terminated(&self) -> bool {
-        self.is_shutdown() && self.state.has_no_active_tasks()
+        self.lifecycle() == ExecutorServiceLifecycle::Terminated
     }
 
     /// Waits until the service has terminated.

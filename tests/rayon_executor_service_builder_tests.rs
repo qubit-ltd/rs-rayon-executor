@@ -14,10 +14,7 @@ mod common;
 use std::io;
 
 use qubit_executor::service::ExecutorService;
-use qubit_rayon_executor::{
-    RayonExecutorService,
-    RayonExecutorServiceBuildError,
-};
+use qubit_rayon_executor::{RayonExecutorService, RayonExecutorServiceBuildError};
 
 use crate::common::helpers::create_runtime;
 
