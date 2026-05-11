@@ -11,14 +11,19 @@
 
 mod common;
 
-use std::{io, sync::mpsc};
+use std::{
+    io,
+    sync::mpsc,
+};
 
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
 use crate::common::helpers::{
-    create_runtime, create_single_worker_service, ok_usize_task, wait_started,
+    create_single_worker_service,
+    ok_usize_task,
+    wait_started,
 };
 
 #[test]
@@ -55,7 +60,7 @@ fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     running
         .get()
         .expect("running task should complete after release");
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -78,8 +83,8 @@ async fn test_rayon_executor_service_state_notifies_after_last_task_completes() 
         .expect("task should be accepted");
     wait_started(started_rx);
     let waiter_service = service.clone();
-    let waiter = tokio::spawn(async move {
-        waiter_service.await_termination().await;
+    let waiter = tokio::task::spawn_blocking(move || {
+        waiter_service.wait_termination();
     });
 
     service.shutdown();

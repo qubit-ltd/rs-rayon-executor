@@ -11,15 +11,32 @@
 
 mod common;
 
-use std::{io, sync::mpsc};
+use std::{
+    io,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            Ordering,
+        },
+        mpsc,
+    },
+};
 
 use qubit_executor::TaskExecutionError;
-use qubit_executor::service::{ExecutorService, RejectedExecution};
+use qubit_executor::service::{
+    ExecutorService,
+    ExecutorServiceLifecycle,
+    SubmissionError,
+};
 
 use qubit_rayon_executor::RayonExecutorService;
 
 use crate::common::helpers::{
-    create_runtime, create_single_worker_service, ok_unit_task, ok_usize_task, wait_started,
+    create_single_worker_service,
+    ok_unit_task,
+    ok_usize_task,
+    wait_started,
 };
 
 #[test]
@@ -41,7 +58,7 @@ fn test_rayon_executor_service_submit_acceptance_is_not_task_success() {
         .expect_err("accepted runnable should report task failure through handle");
     assert!(matches!(err, TaskExecutionError::Failed(_)));
     service.shutdown();
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
 }
 
 #[test]
@@ -57,7 +74,32 @@ fn test_rayon_executor_service_submit_callable_returns_value() {
         42,
     );
     service.shutdown();
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
+}
+
+#[test]
+fn test_rayon_executor_service_submit_runs_detached_task() {
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .build()
+        .expect("service should be created");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_task = Arc::clone(&completed);
+
+    service
+        .submit(move || {
+            completed_for_task.store(true, Ordering::Release);
+            Ok::<(), io::Error>(())
+        })
+        .expect("service should accept runnable");
+
+    service.shutdown();
+    service.wait_termination();
+
+    assert!(completed.load(Ordering::Acquire));
+    assert_eq!(service.lifecycle(), ExecutorServiceLifecycle::Terminated);
+    assert!(service.is_not_running());
+    assert!(service.is_terminated());
 }
 
 #[test]
@@ -67,8 +109,8 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
     service.shutdown();
     let result = service.submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>);
 
-    assert!(matches!(result, Err(RejectedExecution::Shutdown)));
-    create_runtime().block_on(service.await_termination());
+    assert!(matches!(result, Err(SubmissionError::Shutdown)));
+    service.wait_termination();
     assert!(service.is_not_running());
     assert!(service.is_terminated());
 }
@@ -105,7 +147,7 @@ fn test_rayon_executor_service_stop_cancels_queued_tasks() {
         .send(())
         .expect("blocking task should receive release signal");
     first.get().expect("running task should complete normally");
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -147,7 +189,7 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
         .send(())
         .expect("blocking task should receive release signal");
     first.get().expect("running task should complete normally");
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -155,8 +197,8 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
 async fn test_rayon_executor_service_await_termination_waits_before_shutdown() {
     let service = RayonExecutorService::new().expect("service should be created");
     let waiter_service = service.clone();
-    let waiter = tokio::spawn(async move {
-        waiter_service.await_termination().await;
+    let waiter = tokio::task::spawn_blocking(move || {
+        waiter_service.wait_termination();
     });
 
     tokio::task::yield_now().await;

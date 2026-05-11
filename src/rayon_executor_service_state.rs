@@ -10,14 +10,19 @@
 use std::{
     collections::HashMap,
     sync::{
-        Mutex, MutexGuard,
-        atomic::{AtomicU8, AtomicUsize, Ordering},
+        Mutex,
+        MutexGuard,
+        atomic::{
+            AtomicU8,
+            AtomicUsize,
+            Ordering,
+        },
     },
 };
 
 use qubit_atomic::AtomicCount;
 use qubit_executor::service::ExecutorServiceLifecycle;
-use tokio::sync::{Notify, futures::Notified};
+use tokio::sync::Notify;
 
 use crate::pending_cancel::PendingCancel;
 
@@ -263,16 +268,6 @@ impl RayonExecutorServiceState {
         if self.is_not_running() && self.has_no_active_tasks() {
             self.terminated_notify.notify_waiters();
         }
-    }
-
-    /// Creates a future for the next lifecycle notification.
-    ///
-    /// # Returns
-    ///
-    /// A notification future that observes later `notify_waiters` calls even if it
-    /// has not yet been polled.
-    pub(crate) fn notified(&self) -> Notified<'_> {
-        self.terminated_notify.notified()
     }
 }
 
