@@ -14,9 +14,10 @@ mod common;
 use std::io;
 
 use qubit_executor::service::ExecutorService;
-use qubit_rayon_executor::{RayonExecutorService, RayonExecutorServiceBuildError};
-
-use crate::common::helpers::create_runtime;
+use qubit_rayon_executor::{
+    RayonExecutorService,
+    RayonExecutorServiceBuildError,
+};
 
 #[test]
 fn test_rayon_executor_service_builder_validates_configuration() {
@@ -63,5 +64,5 @@ fn test_rayon_executor_service_builder_sets_thread_options() {
             .starts_with("rayon-custom-")
     );
     service.shutdown();
-    create_runtime().block_on(service.await_termination());
+    service.wait_termination();
 }
