@@ -1,6 +1,6 @@
 # Qubit Rayon Executor
 
-[![CircleCI](https://circleci.com/gh/qubit-ltd/rs-rayon-executor.svg?style=shield)](https://circleci.com/gh/qubit-ltd/rs-rayon-executor)
+[![Rust CI](https://github.com/qubit-ltd/rs-rayon-executor/actions/workflows/ci.yml/badge.svg)](https://github.com/qubit-ltd/rs-rayon-executor/actions/workflows/ci.yml)
 [![Coverage Status](https://coveralls.io/repos/github/qubit-ltd/rs-rayon-executor/badge.svg?branch=main)](https://coveralls.io/github/qubit-ltd/rs-rayon-executor?branch=main)
 [![Crates.io](https://img.shields.io/crates/v/qubit-rayon-executor.svg?color=blue)](https://crates.io/crates/qubit-rayon-executor)
 [![Rust](https://img.shields.io/badge/rust-1.94+-blue.svg?logo=rust)](https://www.rust-lang.org)
