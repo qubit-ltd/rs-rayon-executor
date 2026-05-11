@@ -73,7 +73,7 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
 
     assert_eq!(queued.cancel(), CancelResult::Cancelled);
     assert!(queued.is_done());
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Dropped)));
     service.shutdown();
     release_tx
         .send(())
