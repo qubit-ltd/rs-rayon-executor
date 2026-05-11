@@ -155,6 +155,7 @@ impl ExecutorService for RayonExecutorService {
         let task_id = self.state.next_task_id();
         self.state.on_task_accepted();
         let (handle, completion) = TaskEndpointPair::new().into_parts();
+        completion.accept();
         let completion = Arc::new(Mutex::new(Some(completion)));
         let completion_for_cancel = Arc::clone(&completion);
         let cancel: PendingCancel = Arc::new(move || {
@@ -162,7 +163,7 @@ impl ExecutorService for RayonExecutorService {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
-                .is_some_and(|completion| completion.cancel())
+                .is_some()
         });
         self.state
             .register_pending_task(task_id, Arc::clone(&cancel));
@@ -203,6 +204,7 @@ impl ExecutorService for RayonExecutorService {
         let task_id = self.state.next_task_id();
         self.state.on_task_accepted();
         let (handle, completion) = TaskEndpointPair::new().into_tracked_parts();
+        completion.accept();
         let completion = Arc::new(Mutex::new(Some(completion)));
         let completion_for_cancel = Arc::clone(&completion);
         let cancel: PendingCancel = Arc::new(move || {
@@ -210,7 +212,7 @@ impl ExecutorService for RayonExecutorService {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
-                .is_some_and(|completion| completion.cancel())
+                .is_some()
         });
         self.state
             .register_pending_task(task_id, Arc::clone(&cancel));

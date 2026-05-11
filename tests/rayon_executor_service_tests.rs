@@ -142,7 +142,7 @@ fn test_rayon_executor_service_stop_cancels_queued_tasks() {
     assert_eq!(report.queued, 1);
     assert_eq!(report.running, 1);
     assert_eq!(report.cancelled, 1);
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Dropped)));
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
@@ -183,7 +183,7 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
     assert_eq!(report.running, 1);
     assert_eq!(report.cancelled, 3);
     for queued in queued_handles {
-        assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+        assert!(matches!(queued.get(), Err(TaskExecutionError::Dropped)));
     }
     release_tx
         .send(())
