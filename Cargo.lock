@@ -628,13 +628,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "qubit-atomic"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33d68a50d78ab3da351a5b600dbbf7aa022068e1809d9e5e32b92fd9dc0a46a2"
+dependencies = [
+ "arc-swap",
+ "portable-atomic",
+]
+
+[[package]]
 name = "qubit-cas"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0244bea39a7da1dd271e32cf6ecf57d789011240ab9c7b2c5c8eee9e17f4cc8"
 dependencies = [
  "konst",
- "qubit-atomic",
+ "qubit-atomic 0.10.3",
  "qubit-error",
  "qubit-function 0.13.2",
  "qubit-retry",
@@ -642,9 +652,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-datatype"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f5aa4c50ea71d2c565d3192ac23efd30d9ba9471f6a1c90c0c5f703ea18c581"
+checksum = "eee27a248b4d18e4b72f9cd7c306d33d2f406194f3448da34c1478b9dfb7942c"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -670,7 +680,7 @@ dependencies = [
  "log",
  "oneshot",
  "parking_lot",
- "qubit-atomic",
+ "qubit-atomic 0.10.3",
  "qubit-cas",
  "qubit-function 0.13.2",
  "qubit-lock",
@@ -712,7 +722,7 @@ dependencies = [
 name = "qubit-rayon-executor"
 version = "0.2.0"
 dependencies = [
- "qubit-atomic",
+ "qubit-atomic 0.11.1",
  "qubit-executor",
  "qubit-function 0.13.2",
  "rayon",
@@ -737,9 +747,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-serde"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4649d4fa2123159641fdd8a8ad1992b1010e7848c50f92acf54d13496b13d03"
+checksum = "3bb1366c9e6473a401c1c6f629066a648aa09dcf9ccf53c5be4b357d48b2ee64"
 dependencies = [
  "qubit-datatype",
  "serde",
@@ -752,7 +762,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49a353860a91fb10ae2abfec4c83bb4baf19731cd09edc71ffa9db2767b8f579"
 dependencies = [
- "qubit-atomic",
+ "qubit-atomic 0.10.3",
  "qubit-cas",
  "thiserror",
 ]
