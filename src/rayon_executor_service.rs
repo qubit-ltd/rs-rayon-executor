@@ -159,11 +159,11 @@ impl ExecutorService for RayonExecutorService {
         let completion = Arc::new(Mutex::new(Some(completion)));
         let completion_for_cancel = Arc::clone(&completion);
         let cancel: PendingCancel = Arc::new(move || {
-            completion_for_cancel
+            let completion = completion_for_cancel
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-                .is_some()
+                .take();
+            completion.is_some_and(|completion| completion.cancel_unstarted())
         });
         self.state
             .register_pending_task(task_id, Arc::clone(&cancel));
@@ -208,11 +208,11 @@ impl ExecutorService for RayonExecutorService {
         let completion = Arc::new(Mutex::new(Some(completion)));
         let completion_for_cancel = Arc::clone(&completion);
         let cancel: PendingCancel = Arc::new(move || {
-            completion_for_cancel
+            let completion = completion_for_cancel
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-                .is_some()
+                .take();
+            completion.is_some_and(|completion| completion.cancel_unstarted())
         });
         self.state
             .register_pending_task(task_id, Arc::clone(&cancel));
