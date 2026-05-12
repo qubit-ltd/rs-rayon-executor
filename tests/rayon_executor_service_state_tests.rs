@@ -53,7 +53,7 @@ fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     assert_eq!(report.running, 1);
     assert_eq!(report.queued, 1);
     assert_eq!(report.cancelled, 1);
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Dropped)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     release_tx
         .send(())
         .expect("running task should receive release signal");
