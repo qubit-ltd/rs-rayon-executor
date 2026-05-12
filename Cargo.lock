@@ -725,6 +725,7 @@ dependencies = [
  "qubit-atomic 0.11.1",
  "qubit-executor",
  "qubit-function 0.13.2",
+ "qubit-state-machine",
  "rayon",
  "thiserror",
  "tokio",
