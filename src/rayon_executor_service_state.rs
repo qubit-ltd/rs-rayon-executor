@@ -21,8 +21,11 @@ use std::{
 };
 
 use qubit_atomic::AtomicCount;
-use qubit_executor::service::ExecutorServiceLifecycle;
-use tokio::sync::Notify;
+use qubit_executor::service::{
+    ExecutorServiceLifecycle,
+    StopReport,
+};
+use qubit_lock::Monitor;
 
 use crate::pending_cancel::PendingCancel;
 
@@ -40,8 +43,8 @@ pub(crate) struct RayonExecutorServiceState {
     pending_tasks: Mutex<HashMap<usize, PendingCancel>>,
     /// Monotonic identifier assigned to each accepted task.
     next_task_id: AtomicUsize,
-    /// Notifies waiters once shutdown has completed and no tasks remain active.
-    terminated_notify: Notify,
+    /// Published termination condition for blocking waiters.
+    terminated: Monitor<bool>,
 }
 
 impl RayonExecutorServiceState {
@@ -58,7 +61,7 @@ impl RayonExecutorServiceState {
             submission_lock: Mutex::new(()),
             pending_tasks: Mutex::new(HashMap::new()),
             next_task_id: AtomicUsize::new(0),
-            terminated_notify: Notify::new(),
+            terminated: Monitor::new(false),
         }
     }
 
@@ -160,7 +163,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` if the task was still pending and was marked as started, or `false`
-    /// if it had already been cancelled or drained by shutdown.
+    /// if it had already been cancelled or stopped.
     pub(crate) fn start_pending_task<F>(&self, task_id: usize, start: F) -> bool
     where
         F: FnOnce() -> bool,
@@ -187,7 +190,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` if the pending task was cancelled by this call, or `false` if it
-    /// had already started, completed, or been drained by `stop`.
+    /// had already started, completed, or been cancelled by `stop`.
     pub(crate) fn cancel_pending_task(&self, task_id: usize, cancel: &PendingCancel) -> bool {
         let should_notify = {
             let mut pending_tasks = self.lock_pending_tasks();
@@ -207,53 +210,47 @@ impl RayonExecutorServiceState {
         true
     }
 
-    /// Drains pending tasks and captures a consistent shutdown snapshot.
+    /// Cancels pending tasks and captures a consistent stop report.
     ///
-    /// The pending-task lock serializes this snapshot with task start and manual
-    /// cancellation, so `queued`, `running`, and the drained hooks describe the
-    /// same observed pending state.
+    /// The pending-task lock serializes cancellation with task start and manual
+    /// cancellation. This keeps the pending-task map, queued counter, and active
+    /// counter in sync for concurrent `stop` calls.
     ///
     /// # Returns
     ///
-    /// A tuple containing the queued task count, running task count, and drained
-    /// cancellation hooks.
-    pub(crate) fn drain_pending_tasks_for_shutdown(&self) -> (usize, usize, Vec<PendingCancel>) {
-        let mut pending_tasks = self.lock_pending_tasks();
-        let queued = self.queued_tasks.get();
-        let running = self.active_tasks.get().saturating_sub(queued);
-        let pending = pending_tasks
-            .drain()
-            .map(|(_, cancel)| cancel)
-            .collect::<Vec<_>>();
-        debug_assert_eq!(pending.len(), queued);
-        (queued, running, pending)
-    }
+    /// A report containing the queued and running task counts observed before
+    /// cancellation, plus the number of pending tasks cancelled by this call.
+    pub(crate) fn cancel_pending_tasks_for_stop(&self) -> StopReport {
+        let (report, should_notify) = {
+            let mut pending_tasks = self.lock_pending_tasks();
+            let queued = self.queued_tasks.get();
+            let running = self.active_tasks.get().saturating_sub(queued);
+            debug_assert_eq!(pending_tasks.len(), queued);
 
-    /// Updates counters for pending tasks drained and cancelled by shutdown.
-    ///
-    /// # Parameters
-    ///
-    /// * `pending` - Cancellation hooks drained from the pending-task map.
-    ///
-    /// # Returns
-    ///
-    /// Number of drained pending tasks whose cancellation callback succeeded.
-    pub(crate) fn cancel_drained_pending_tasks(&self, pending: Vec<PendingCancel>) -> usize {
-        let mut cancelled = 0usize;
-        for cancel in pending {
-            let was_cancelled = cancel();
-            debug_assert!(
-                was_cancelled,
-                "drained pending rayon task should cancel before start",
-            );
-            if was_cancelled {
-                self.queued_tasks.dec();
-                self.active_tasks.dec();
-                cancelled += 1;
+            let mut cancelled = 0usize;
+            for (_, cancel) in pending_tasks.drain() {
+                let was_cancelled = cancel();
+                debug_assert!(
+                    was_cancelled,
+                    "drained pending rayon task should cancel before start",
+                );
+                if was_cancelled {
+                    self.queued_tasks.dec();
+                    self.active_tasks.dec();
+                    cancelled += 1;
+                }
             }
+
+            (
+                StopReport::new(queued, running, cancelled),
+                self.has_no_active_tasks(),
+            )
+        };
+
+        if should_notify {
+            self.notify_if_terminated();
         }
-        self.notify_if_terminated();
-        cancelled
+        report
     }
 
     /// Updates counters after a started task completes.
@@ -263,10 +260,16 @@ impl RayonExecutorServiceState {
         }
     }
 
-    /// Wakes termination waiters when shutdown and task completion allow it.
+    /// Blocks until shutdown or stop has completed and no tasks remain active.
+    pub(crate) fn wait_for_termination(&self) {
+        self.terminated.wait_until(|terminated| *terminated, |_| ());
+    }
+
+    /// Publishes termination and wakes waiters when no task remains active.
     pub(crate) fn notify_if_terminated(&self) {
         if self.is_not_running() && self.has_no_active_tasks() {
-            self.terminated_notify.notify_waiters();
+            self.terminated.write(|terminated| *terminated = true);
+            self.terminated.notify_all();
         }
     }
 }

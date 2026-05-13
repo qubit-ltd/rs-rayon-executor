@@ -22,26 +22,25 @@ pub use module::{
 
 ## How to Format Code
 
-### Option 1: Using the Format Script (Recommended)
-
-```bash
-./format.sh
-```
-
-This script will:
-1. Check if nightly toolchain is installed
-2. Install it automatically if needed
-3. Run `cargo +nightly fmt`
-
-### Option 2: Manual Command
+### Option 1: Manual Format Command (Recommended)
 
 ```bash
 # Install nightly toolchain (if not already installed)
-rustup toolchain install nightly
+rustup toolchain install nightly --component rustfmt
 
-# Format code
-cargo +nightly fmt
+# Format code using the same configuration as CI
+cargo +nightly fmt -- --config-path .rs-ci/rustfmt.toml
 ```
+
+### Option 2: CI-Style Local Check
+
+```bash
+./align-ci.sh
+./ci-check.sh
+```
+
+`./align-ci.sh` synchronizes the shared CI helper scripts and formatting
+configuration, then `./ci-check.sh` runs the same checks used by CI.
 
 ## CI/CD Integration
 
@@ -52,7 +51,7 @@ Both the local CI check script (`ci-check.sh`) and CircleCI configuration (`.cir
 
 ## Configuration
 
-The formatting configuration is defined in `rustfmt.toml`:
+The formatting configuration is defined in `.rs-ci/rustfmt.toml`:
 
 ```toml
 # Format imports with vertical layout (each item on its own line within braces)
@@ -76,7 +75,7 @@ This is the **only configuration option** needed to achieve our desired formatti
 Make sure your code is formatted before committing:
 
 ```bash
-./format.sh
+cargo +nightly fmt -- --config-path .rs-ci/rustfmt.toml
 ```
 
 ### Nightly toolchain issues
@@ -92,4 +91,3 @@ rustup toolchain install nightly --component rustfmt
 
 - [Rustfmt Documentation](https://rust-lang.github.io/rustfmt/)
 - [Rustup Documentation](https://rust-lang.github.io/rustup/)
-
