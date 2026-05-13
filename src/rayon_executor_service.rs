@@ -23,6 +23,7 @@ use qubit_executor::{
     task::spi::{
         TaskEndpointPair,
         TaskRunner,
+        TaskSlot,
     },
 };
 
@@ -79,6 +80,73 @@ impl RayonExecutorService {
     #[inline]
     pub fn builder() -> RayonExecutorServiceBuilder {
         RayonExecutorServiceBuilder::default()
+    }
+
+    /// Accepts a callable, schedules it on the Rayon pool, and returns its handle data.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute on a Rayon worker.
+    /// * `split` - Function that splits a task endpoint pair into the caller
+    ///   handle and runner slot required by the chosen handle type.
+    ///
+    /// # Returns
+    ///
+    /// The caller-facing handle, stable task identifier, and pending
+    /// cancellation hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Shutdown`] if shutdown or stop has already
+    /// been requested before the task is accepted.
+    fn submit_callable_with<C, R, E, H, F>(
+        &self,
+        task: C,
+        split: F,
+    ) -> Result<(H, usize, PendingCancel), SubmissionError>
+    where
+        C: Callable<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+        F: FnOnce(TaskEndpointPair<R, E>) -> (H, TaskSlot<R, E>),
+    {
+        let submission_guard = self.state.lock_submission();
+        if self.state.is_not_running() {
+            return Err(SubmissionError::Shutdown);
+        }
+        let task_id = self.state.next_task_id();
+        self.state.on_task_accepted();
+        let (handle, completion) = split(TaskEndpointPair::new());
+        completion.accept();
+        let completion = Arc::new(Mutex::new(Some(completion)));
+        let completion_for_cancel = Arc::clone(&completion);
+        let cancel: PendingCancel = Arc::new(move || {
+            let completion = completion_for_cancel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            completion.is_some_and(|completion| completion.cancel_unstarted())
+        });
+        self.state
+            .register_pending_task(task_id, Arc::clone(&cancel));
+        drop(submission_guard);
+
+        let completion_for_run = completion;
+        let state_for_run = Arc::clone(&self.state);
+        self.pool.spawn_fifo(move || {
+            if !state_for_run.start_pending_task(task_id, || true) {
+                return;
+            }
+            let completion = completion_for_run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(completion) = completion {
+                TaskRunner::new(task).run(completion);
+            }
+            state_for_run.on_task_completed();
+        });
+        Ok((handle, task_id, cancel))
     }
 }
 
@@ -144,42 +212,7 @@ impl ExecutorService for RayonExecutorService {
         R: Send + 'static,
         E: Send + 'static,
     {
-        let submission_guard = self.state.lock_submission();
-        if self.state.is_not_running() {
-            return Err(SubmissionError::Shutdown);
-        }
-        let task_id = self.state.next_task_id();
-        self.state.on_task_accepted();
-        let (handle, completion) = TaskEndpointPair::new().into_parts();
-        completion.accept();
-        let completion = Arc::new(Mutex::new(Some(completion)));
-        let completion_for_cancel = Arc::clone(&completion);
-        let cancel: PendingCancel = Arc::new(move || {
-            let completion = completion_for_cancel
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            completion.is_some_and(|completion| completion.cancel_unstarted())
-        });
-        self.state
-            .register_pending_task(task_id, Arc::clone(&cancel));
-        drop(submission_guard);
-
-        let completion_for_run = completion;
-        let state_for_run = Arc::clone(&self.state);
-        self.pool.spawn_fifo(move || {
-            if !state_for_run.start_pending_task(task_id, || true) {
-                return;
-            }
-            let completion = completion_for_run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            if let Some(completion) = completion {
-                TaskRunner::new(task).run(completion);
-            }
-            state_for_run.on_task_completed();
-        });
+        let (handle, _, _) = self.submit_callable_with(task, TaskEndpointPair::into_parts)?;
         Ok(handle)
     }
 
@@ -193,42 +226,8 @@ impl ExecutorService for RayonExecutorService {
         R: Send + 'static,
         E: Send + 'static,
     {
-        let submission_guard = self.state.lock_submission();
-        if self.state.is_not_running() {
-            return Err(SubmissionError::Shutdown);
-        }
-        let task_id = self.state.next_task_id();
-        self.state.on_task_accepted();
-        let (handle, completion) = TaskEndpointPair::new().into_tracked_parts();
-        completion.accept();
-        let completion = Arc::new(Mutex::new(Some(completion)));
-        let completion_for_cancel = Arc::clone(&completion);
-        let cancel: PendingCancel = Arc::new(move || {
-            let completion = completion_for_cancel
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            completion.is_some_and(|completion| completion.cancel_unstarted())
-        });
-        self.state
-            .register_pending_task(task_id, Arc::clone(&cancel));
-        drop(submission_guard);
-
-        let completion_for_run = completion;
-        let state_for_run = Arc::clone(&self.state);
-        self.pool.spawn_fifo(move || {
-            if !state_for_run.start_pending_task(task_id, || true) {
-                return;
-            }
-            let completion = completion_for_run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            if let Some(completion) = completion {
-                TaskRunner::new(task).run(completion);
-            }
-            state_for_run.on_task_completed();
-        });
+        let (handle, task_id, cancel) =
+            self.submit_callable_with(task, TaskEndpointPair::into_tracked_parts)?;
         Ok(RayonTaskHandle::new(
             handle,
             task_id,

@@ -15,7 +15,11 @@ use std::{
     time::Duration,
 };
 
-use qubit_rayon_executor::RayonExecutorService;
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::{
+    RayonExecutorService,
+    RayonTaskHandle,
+};
 
 /// Returns a successful unit task result for executor submission tests.
 pub(crate) fn ok_unit_task() -> Result<(), io::Error> {
@@ -41,6 +45,36 @@ pub(crate) fn create_single_worker_service() -> RayonExecutorService {
         .num_threads(1)
         .build()
         .expect("rayon executor service should be created")
+}
+
+/// Submits a blocking tracked task and waits until it occupies the worker.
+///
+/// # Parameters
+///
+/// * `service` - Executor service that accepts the blocking task.
+///
+/// # Returns
+///
+/// The tracked handle for the running task and a sender that releases it.
+pub(crate) fn submit_blocking_task(
+    service: &RayonExecutorService,
+) -> (RayonTaskHandle<(), io::Error>, mpsc::Sender<()>) {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+
+    let handle = service
+        .submit_tracked(move || {
+            started_tx
+                .send(())
+                .expect("test should receive task start signal");
+            release_rx
+                .recv()
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            Ok::<(), io::Error>(())
+        })
+        .expect("blocking task should be accepted");
+    wait_started(started_rx);
+    (handle, release_tx)
 }
 
 /// Waits until a task signals that it has started.

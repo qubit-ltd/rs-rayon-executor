@@ -35,8 +35,6 @@ pub(crate) struct RayonExecutorServiceState {
     lifecycle: AtomicU8,
     /// Number of accepted tasks that have not yet completed or been cancelled.
     active_tasks: AtomicCount,
-    /// Number of accepted tasks that have not started running yet.
-    queued_tasks: AtomicCount,
     /// Serializes task submission and shutdown transitions.
     submission_lock: Mutex<()>,
     /// Cancellation hooks for tasks that have not started yet.
@@ -57,7 +55,6 @@ impl RayonExecutorServiceState {
         Self {
             lifecycle: AtomicU8::new(ExecutorServiceLifecycle::Running as u8),
             active_tasks: AtomicCount::new(0),
-            queued_tasks: AtomicCount::new(0),
             submission_lock: Mutex::new(()),
             pending_tasks: Mutex::new(HashMap::new()),
             next_task_id: AtomicUsize::new(0),
@@ -140,7 +137,6 @@ impl RayonExecutorServiceState {
     /// Records one accepted task.
     pub(crate) fn on_task_accepted(&self) {
         self.active_tasks.inc();
-        self.queued_tasks.inc();
     }
 
     /// Registers a pending task cancellation hook.
@@ -176,7 +172,6 @@ impl RayonExecutorServiceState {
             return false;
         }
         pending_tasks.remove(&task_id);
-        self.queued_tasks.dec();
         true
     }
 
@@ -201,7 +196,6 @@ impl RayonExecutorServiceState {
                 return false;
             }
             pending_tasks.remove(&task_id);
-            self.queued_tasks.dec();
             self.active_tasks.dec() == 0
         };
         if should_notify {
@@ -213,8 +207,8 @@ impl RayonExecutorServiceState {
     /// Cancels pending tasks and captures a consistent stop report.
     ///
     /// The pending-task lock serializes cancellation with task start and manual
-    /// cancellation. This keeps the pending-task map, queued counter, and active
-    /// counter in sync for concurrent `stop` calls.
+    /// cancellation. This keeps the pending-task map and active counter in sync
+    /// for concurrent `stop` calls.
     ///
     /// # Returns
     ///
@@ -223,9 +217,8 @@ impl RayonExecutorServiceState {
     pub(crate) fn cancel_pending_tasks_for_stop(&self) -> StopReport {
         let (report, should_notify) = {
             let mut pending_tasks = self.lock_pending_tasks();
-            let queued = self.queued_tasks.get();
+            let queued = pending_tasks.len();
             let running = self.active_tasks.get().saturating_sub(queued);
-            debug_assert_eq!(pending_tasks.len(), queued);
 
             let mut cancelled = 0usize;
             for (_, cancel) in pending_tasks.drain() {
@@ -235,7 +228,6 @@ impl RayonExecutorServiceState {
                     "drained pending rayon task should cancel before start",
                 );
                 if was_cancelled {
-                    self.queued_tasks.dec();
                     self.active_tasks.dec();
                     cancelled += 1;
                 }
