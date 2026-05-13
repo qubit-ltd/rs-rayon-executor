@@ -24,7 +24,7 @@ libraries can depend only on the execution model they need.
 - `RayonExecutorServiceBuilder` for configuring worker count, thread-name prefix, and stack size.
 - `TaskHandle` for callable results and `RayonTaskHandle` for tracked status and cancellation.
 - `RayonExecutorServiceBuildError` for zero thread count, zero stack size, and Rayon build failures.
-- Shared `ExecutorService`, `RejectedExecution`, and `StopReport` re-exports for convenient imports.
+- Shared `ExecutorService`, `SubmissionError`, and `StopReport` re-exports for convenient imports.
 - Lifecycle behavior aligned with other Qubit executor services.
 
 ## CPU-Bound Workloads
@@ -48,7 +48,8 @@ with status and cancellation.
 Queued tasks can be cancelled before Rayon starts running them. `shutdown` stops
 accepting new tasks and allows accepted work to finish. `stop` stops
 accepting new tasks and cancels work that has not started yet; already running
-CPU work is not forcibly stopped.
+CPU work is not forcibly stopped. Cancelled callable and tracked handles report
+`TaskExecutionError::Cancelled`.
 
 ## Quick Start
 

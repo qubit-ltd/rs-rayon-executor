@@ -7,13 +7,9 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-use std::{
-    sync::{
-        Arc,
-        Mutex,
-    },
-    thread,
-    time::Duration,
+use std::sync::{
+    Arc,
+    Mutex,
 };
 
 use qubit_function::{
@@ -136,7 +132,7 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// # Returns
     ///
-    /// A [`RayonTaskHandle`] for the accepted task.
+    /// A [`TaskHandle`] for the accepted task.
     ///
     /// # Errors
     ///
@@ -259,16 +255,12 @@ impl ExecutorService for RayonExecutorService {
     /// # Returns
     ///
     /// A count-based report describing the pending and running work observed at
-    /// the time of the shutdown request, plus the number of pending tasks for
+    /// the time of the stop request, plus the number of pending tasks for
     /// which cancellation succeeded.
     fn stop(&self) -> StopReport {
         let _guard = self.state.lock_submission();
         self.state.stop();
-        let (queued, running, pending) = self.state.drain_pending_tasks_for_shutdown();
-        drop(_guard);
-
-        let cancelled = self.state.cancel_drained_pending_tasks(pending);
-        StopReport::new(queued, running, cancelled)
+        self.state.cancel_pending_tasks_for_stop()
     }
 
     /// Returns the current lifecycle state.
@@ -288,8 +280,6 @@ impl ExecutorService for RayonExecutorService {
 
     /// Blocks until the service has terminated.
     fn wait_termination(&self) {
-        while !self.is_terminated() {
-            thread::sleep(Duration::from_millis(1));
-        }
+        self.state.wait_for_termination();
     }
 }

@@ -15,6 +15,7 @@ use std::{
     io,
     sync::{
         Arc,
+        Barrier,
         atomic::{
             AtomicBool,
             Ordering,
@@ -116,6 +117,66 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
 }
 
 #[test]
+fn test_rayon_executor_service_shutdown_allows_queued_tasks_to_finish() {
+    let service = create_single_worker_service();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+
+    let running = service
+        .submit_tracked(move || {
+            started_tx
+                .send(())
+                .expect("test should receive task start signal");
+            release_rx
+                .recv()
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            Ok::<(), io::Error>(())
+        })
+        .expect("running task should be accepted");
+    wait_started(started_rx);
+    let queued = service
+        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("queued task should be accepted");
+
+    service.shutdown();
+    let rejected = service.submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>);
+    assert!(matches!(rejected, Err(SubmissionError::Shutdown)));
+
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
+    running
+        .get()
+        .expect("running task should complete normally");
+    assert_eq!(
+        queued.get().expect("queued task should complete normally"),
+        42
+    );
+    service.wait_termination();
+    assert!(service.is_terminated());
+}
+
+#[test]
+fn test_rayon_executor_service_stop_rejects_new_tasks_and_is_idempotent_when_empty() {
+    let service = RayonExecutorService::new().expect("service should be created");
+
+    let report = service.stop();
+    assert_eq!(report.queued, 0);
+    assert_eq!(report.running, 0);
+    assert_eq!(report.cancelled, 0);
+
+    let rejected = service.submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>);
+    assert!(matches!(rejected, Err(SubmissionError::Shutdown)));
+
+    let second_report = service.stop();
+    assert_eq!(second_report.queued, 0);
+    assert_eq!(second_report.running, 0);
+    assert_eq!(second_report.cancelled, 0);
+    service.wait_termination();
+    assert!(service.is_terminated());
+}
+
+#[test]
 fn test_rayon_executor_service_stop_cancels_queued_tasks() {
     let service = create_single_worker_service();
     let (started_tx, started_rx) = mpsc::channel();
@@ -189,6 +250,80 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
         .send(())
         .expect("blocking task should receive release signal");
     first.get().expect("running task should complete normally");
+    service.wait_termination();
+    assert!(service.is_terminated());
+}
+
+#[test]
+fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
+    const QUEUED_TASKS: usize = 8_192;
+
+    let service = create_single_worker_service();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+
+    let running = service
+        .submit_tracked(move || {
+            started_tx
+                .send(())
+                .expect("test should receive task start signal");
+            release_rx
+                .recv()
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            Ok::<(), io::Error>(())
+        })
+        .expect("running task should be accepted");
+    wait_started(started_rx);
+    let queued_handles = (0..QUEUED_TASKS)
+        .map(|_| {
+            service
+                .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+                .expect("queued task should be accepted")
+        })
+        .collect::<Vec<_>>();
+
+    let barrier = Arc::new(Barrier::new(3));
+    let first_stop_service = service.clone();
+    let first_stop_barrier = Arc::clone(&barrier);
+    let first_stop = std::thread::spawn(move || {
+        first_stop_barrier.wait();
+        first_stop_service.stop()
+    });
+    let second_stop_service = service.clone();
+    let second_stop_barrier = Arc::clone(&barrier);
+    let second_stop = std::thread::spawn(move || {
+        second_stop_barrier.wait();
+        second_stop_service.stop()
+    });
+
+    barrier.wait();
+    let reports = [
+        first_stop.join().expect("first stop should not panic"),
+        second_stop.join().expect("second stop should not panic"),
+    ];
+
+    assert!(
+        reports
+            .iter()
+            .any(|report| report.queued == QUEUED_TASKS && report.cancelled == QUEUED_TASKS),
+        "one concurrent stop should cancel all queued tasks: {reports:?}",
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|report| report.queued == 0 && report.cancelled == 0),
+        "one concurrent stop should observe no remaining queued tasks: {reports:?}",
+    );
+    for queued in queued_handles {
+        assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    }
+
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
+    running
+        .get()
+        .expect("running task should complete normally");
     service.wait_termination();
     assert!(service.is_terminated());
 }

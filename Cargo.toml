@@ -30,14 +30,11 @@ doctest = true
 [dependencies]
 rayon = "1.12"
 thiserror = "2.0"
-tokio = { version = "1.52", features = ["sync"] }
 
 qubit-atomic = "0.11"
 qubit-executor = "0.3"
 qubit-function = "0.13"
-# qubit-executor 0.3.x still requires the qubit-atomic 0.10/qubit-cas 0.5
-# dependency line used by qubit-state-machine 0.3.1.
-qubit-state-machine = "0.3"
+qubit-lock = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
