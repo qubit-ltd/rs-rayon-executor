@@ -23,27 +23,14 @@ use qubit_rayon_executor::RayonExecutorService;
 use crate::common::helpers::{
     create_single_worker_service,
     ok_usize_task,
+    submit_blocking_task,
     wait_started,
 };
 
 #[test]
 fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     let service = create_single_worker_service();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-
-    let running = service
-        .submit_tracked(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            Ok::<(), io::Error>(())
-        })
-        .expect("running task should be accepted");
-    wait_started(started_rx);
+    let (running, release_tx) = submit_blocking_task(&service);
     let queued = service
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");

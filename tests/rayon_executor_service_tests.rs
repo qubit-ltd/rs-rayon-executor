@@ -20,7 +20,6 @@ use std::{
             AtomicBool,
             Ordering,
         },
-        mpsc,
     },
 };
 
@@ -37,7 +36,7 @@ use crate::common::helpers::{
     create_single_worker_service,
     ok_unit_task,
     ok_usize_task,
-    wait_started,
+    submit_blocking_task,
 };
 
 #[test]
@@ -119,21 +118,7 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
 #[test]
 fn test_rayon_executor_service_shutdown_allows_queued_tasks_to_finish() {
     let service = create_single_worker_service();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-
-    let running = service
-        .submit_tracked(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            Ok::<(), io::Error>(())
-        })
-        .expect("running task should be accepted");
-    wait_started(started_rx);
+    let (running, release_tx) = submit_blocking_task(&service);
     let queued = service
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
@@ -179,21 +164,7 @@ fn test_rayon_executor_service_stop_rejects_new_tasks_and_is_idempotent_when_emp
 #[test]
 fn test_rayon_executor_service_stop_cancels_queued_tasks() {
     let service = create_single_worker_service();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-
-    let first = service
-        .submit_tracked(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            Ok::<(), io::Error>(())
-        })
-        .expect("first task should be accepted");
-    wait_started(started_rx);
+    let (first, release_tx) = submit_blocking_task(&service);
     let queued = service
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
@@ -215,21 +186,7 @@ fn test_rayon_executor_service_stop_cancels_queued_tasks() {
 #[test]
 fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
     let service = create_single_worker_service();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-
-    let first = service
-        .submit_tracked(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            Ok::<(), io::Error>(())
-        })
-        .expect("first task should be accepted");
-    wait_started(started_rx);
+    let (first, release_tx) = submit_blocking_task(&service);
     let queued_handles = (0..3)
         .map(|_| {
             service
@@ -259,21 +216,7 @@ fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
     const QUEUED_TASKS: usize = 8_192;
 
     let service = create_single_worker_service();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-
-    let running = service
-        .submit_tracked(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            Ok::<(), io::Error>(())
-        })
-        .expect("running task should be accepted");
-    wait_started(started_rx);
+    let (running, release_tx) = submit_blocking_task(&service);
     let queued_handles = (0..QUEUED_TASKS)
         .map(|_| {
             service
