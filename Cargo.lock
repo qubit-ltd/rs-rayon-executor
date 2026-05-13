@@ -664,6 +664,8 @@ checksum = "7d469a0405040734040db3479b6c5c47188fc2ea05258d9db51a9c12601e1466"
 [[package]]
 name = "qubit-executor"
 version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c99d21c6e06dc4fe30316f0ce035fd17ceee111e5ac6969dfddf891a1d7cd34"
 dependencies = [
  "log",
  "oneshot",
@@ -689,6 +691,8 @@ dependencies = [
 [[package]]
 name = "qubit-lock"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a426563827821db84940d101c37898d04925397e90b288f0a34a6171a593b547"
 dependencies = [
  "parking_lot",
 ]
