@@ -134,16 +134,30 @@ impl RayonExecutorService {
         let completion_for_run = completion;
         let state_for_run = Arc::clone(&self.state);
         self.pool.spawn_fifo(move || {
-            if !state_for_run.start_pending_task(task_id, || true) {
+            let mut running_completion = None;
+            if !state_for_run.start_pending_task(task_id, || {
+                let mut completion = completion_for_run
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let Some(task_completion) = completion.take() else {
+                    return false;
+                };
+                match task_completion.try_start() {
+                    Ok(running) => {
+                        running_completion = Some(running);
+                        true
+                    }
+                    Err(task_completion) => {
+                        *completion = Some(task_completion);
+                        false
+                    }
+                }
+            }) {
                 return;
             }
-            let completion = completion_for_run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            if let Some(completion) = completion {
-                TaskRunner::new(task).run(completion);
-            }
+            let running_completion =
+                running_completion.expect("claimed pending task should own a running slot");
+            TaskRunner::new(task).run_started(running_completion);
             state_for_run.on_task_completed();
         });
         Ok((handle, task_id, cancel))

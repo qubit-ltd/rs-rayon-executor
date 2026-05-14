@@ -149,18 +149,19 @@ impl RayonExecutorServiceState {
         self.lock_pending_tasks().insert(task_id, cancel);
     }
 
-    /// Marks a pending task as started if cancellation has not won first.
+    /// Claims a pending task for execution if cancellation has not won first.
     ///
     /// # Parameters
     ///
-    /// * `task_id` - Stable identifier of the task to start.
-    /// * `start` - Callback that marks the task handle as started.
+    /// * `task_id` - Stable identifier of the task to claim.
+    /// * `claim` - Callback that decides whether the pending task can be
+    ///   claimed before it is removed from the pending-task map.
     ///
     /// # Returns
     ///
-    /// `true` if the task was still pending and was marked as started, or `false`
-    /// if it had already been cancelled or stopped.
-    pub(crate) fn start_pending_task<F>(&self, task_id: usize, start: F) -> bool
+    /// `true` if the task was still pending and was claimed for execution, or
+    /// `false` if it had already been cancelled or stopped.
+    pub(crate) fn start_pending_task<F>(&self, task_id: usize, claim: F) -> bool
     where
         F: FnOnce() -> bool,
     {
@@ -168,7 +169,7 @@ impl RayonExecutorServiceState {
         if !pending_tasks.contains_key(&task_id) {
             return false;
         }
-        if !start() {
+        if !claim() {
             return false;
         }
         pending_tasks.remove(&task_id);
