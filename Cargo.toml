@@ -1,6 +1,6 @@
 [package]
 name = "qubit-rayon-executor"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -32,7 +32,7 @@ rayon = "1.12"
 thiserror = "2.0"
 
 qubit-atomic = "0.13"
-qubit-executor = "0.5.1"
+qubit-executor = "0.5"
 qubit-function = "0.13"
 qubit-lock = { default-features = false, version = "0.6" }
 
