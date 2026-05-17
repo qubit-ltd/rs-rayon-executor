@@ -12,15 +12,15 @@ documentation = "https://docs.rs/qubit-rayon-executor"
 readme = "README.md"
 keywords = ["rayon", "executor", "cpu", "concurrency"]
 categories = ["concurrency"]
-exclude = [
-    "align-ci.sh",
-    "ci-check.sh",
-    "coverage.sh",
-    "style-check.sh",
-    "update-submodule.sh",
-    ".github/*",
-    ".llvm-cov.toml",
-    ".cargo-audit.toml.example",
+include = [
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/README.zh_CN.md",
+    "/doc/**/user_guide*.md",
+    "/examples/**",
+    "/src/**",
+    "/tests/**",
 ]
 
 [lib]
@@ -32,8 +32,8 @@ rayon = "1.12"
 thiserror = "2.0"
 
 qubit-atomic = "0.13"
-qubit-executor = "0.5.2"
-qubit-function = "0.13"
+qubit-executor = "0.6"
+qubit-function = "0.14"
 qubit-lock = { default-features = false, version = "0.8" }
 
 [dev-dependencies]
