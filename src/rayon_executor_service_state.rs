@@ -25,7 +25,7 @@ use qubit_executor::service::{
     ExecutorServiceLifecycle,
     StopReport,
 };
-use qubit_lock::Monitor;
+use qubit_lock::ParkingLotMonitor;
 
 use crate::pending_cancel::PendingCancel;
 
@@ -42,7 +42,7 @@ pub(crate) struct RayonExecutorServiceState {
     /// Monotonic identifier assigned to each accepted task.
     next_task_id: AtomicUsize,
     /// Published termination condition for blocking waiters.
-    terminated: Monitor<bool>,
+    terminated: ParkingLotMonitor<bool>,
 }
 
 impl RayonExecutorServiceState {
@@ -58,7 +58,7 @@ impl RayonExecutorServiceState {
             submission_lock: Mutex::new(()),
             pending_tasks: Mutex::new(HashMap::new()),
             next_task_id: AtomicUsize::new(0),
-            terminated: Monitor::new(false),
+            terminated: ParkingLotMonitor::new(false),
         }
     }
 
