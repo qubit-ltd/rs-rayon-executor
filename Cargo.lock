@@ -673,7 +673,7 @@ dependencies = [
  "qubit-atomic",
  "qubit-cas",
  "qubit-function",
- "qubit-lock",
+ "qubit-lock 0.6.0",
  "qubit-state-machine",
  "thiserror",
 ]
@@ -698,13 +698,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "qubit-lock"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c2246c129b25ffddc4572117166b3e0cd71e6437bdc4769bdba4c581f54a74a"
+dependencies = [
+ "parking_lot",
+]
+
+[[package]]
 name = "qubit-rayon-executor"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "qubit-atomic",
  "qubit-executor",
  "qubit-function",
- "qubit-lock",
+ "qubit-lock 0.8.0",
  "rayon",
  "thiserror",
  "tokio",
