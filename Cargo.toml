@@ -32,7 +32,7 @@ rayon = "1.12"
 thiserror = "2.0"
 
 qubit-atomic = "0.13"
-qubit-executor = "0.5"
+qubit-executor = "0.5.2"
 qubit-function = "0.13"
 qubit-lock = { default-features = false, version = "0.8" }
 
