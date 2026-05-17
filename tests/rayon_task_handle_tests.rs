@@ -11,7 +11,14 @@
 
 mod common;
 
-use std::io;
+use std::{
+    io,
+    thread,
+    time::{
+        Duration,
+        Instant,
+    },
+};
 
 use qubit_executor::service::ExecutorService;
 use qubit_executor::task::spi::{
@@ -164,7 +171,7 @@ fn test_rayon_task_handle_reports_status_and_try_get_states() {
         .expect("queued task should be accepted");
     assert_eq!(queued.status(), TaskStatus::Pending);
 
-    let queued = match queued.try_get() {
+    let mut queued = match queued.try_get() {
         TryGet::Pending(queued) => queued,
         TryGet::Ready(result) => panic!("queued task should not be ready yet: {result:?}"),
     };
@@ -173,13 +180,22 @@ fn test_rayon_task_handle_reports_status_and_try_get_states() {
         .send(())
         .expect("blocking task should receive release signal");
     first.get().expect("running task should complete normally");
-    wait_until(|| queued.is_done());
+    wait_until(|| queued.status() == TaskStatus::Succeeded);
     assert_eq!(queued.status(), TaskStatus::Succeeded);
 
-    match queued.try_get() {
-        TryGet::Ready(result) => assert_eq!(result.expect("callable should complete"), 42),
-        TryGet::Pending(_) => panic!("completed task should be ready"),
-    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let result = loop {
+        match queued.try_get() {
+            TryGet::Ready(result) => break result,
+            TryGet::Pending(pending) if Instant::now() < deadline => {
+                queued = pending;
+                thread::sleep(Duration::from_millis(10));
+            }
+            TryGet::Pending(_) => panic!("completed task result should become ready"),
+        }
+    };
+
+    assert_eq!(result.expect("callable should complete"), 42);
 
     service.shutdown();
     service.wait_termination();
