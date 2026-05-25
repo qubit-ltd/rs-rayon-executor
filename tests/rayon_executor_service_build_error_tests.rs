@@ -34,10 +34,7 @@ fn test_rayon_executor_service_build_error_zero_thread_count_display() {
         "zero thread count should be rejected",
     );
 
-    assert!(matches!(
-        err,
-        RayonExecutorServiceBuildError::ZeroThreadCount,
-    ));
+    assert!(matches!(err, RayonExecutorServiceBuildError::ZeroThreadCount,));
     assert_eq!(
         err.to_string(),
         "rayon executor service thread count must be greater than zero",
@@ -51,10 +48,7 @@ fn test_rayon_executor_service_build_error_zero_thread_count_display() {
 #[test]
 fn test_rayon_executor_service_build_error_zero_stack_size_display() {
     let err = expect_build_error(
-        RayonExecutorService::builder()
-            .num_threads(1)
-            .stack_size(0)
-            .build(),
+        RayonExecutorService::builder().num_threads(1).stack_size(0).build(),
         "zero stack size should be rejected",
     );
 

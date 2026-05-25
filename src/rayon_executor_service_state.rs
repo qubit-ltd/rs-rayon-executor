@@ -224,20 +224,14 @@ impl RayonExecutorServiceState {
             let mut cancelled = 0usize;
             for (_, cancel) in pending_tasks.drain() {
                 let was_cancelled = cancel();
-                debug_assert!(
-                    was_cancelled,
-                    "drained pending rayon task should cancel before start",
-                );
+                debug_assert!(was_cancelled, "drained pending rayon task should cancel before start",);
                 if was_cancelled {
                     self.active_tasks.dec();
                     cancelled += 1;
                 }
             }
 
-            (
-                StopReport::new(queued, running, cancelled),
-                self.has_no_active_tasks(),
-            )
+            (StopReport::new(queued, running, cancelled), self.has_no_active_tasks())
         };
 
         if should_notify {
