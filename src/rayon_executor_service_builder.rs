@@ -137,7 +137,5 @@ impl Default for RayonExecutorServiceBuilder {
 ///
 /// The available CPU parallelism, or `1` if it cannot be detected.
 fn default_rayon_thread_count() -> usize {
-    thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
+    thread::available_parallelism().map(usize::from).unwrap_or(1)
 }
