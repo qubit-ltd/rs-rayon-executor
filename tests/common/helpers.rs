@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2025 - 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 #![allow(dead_code)]
 
 use std::{
@@ -36,7 +34,9 @@ pub(crate) fn create_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("Failed to create tokio runtime for rayon executor service tests")
+        .expect(
+            "Failed to create tokio runtime for rayon executor service tests",
+        )
 }
 
 /// Creates a Rayon executor service with a single worker thread.
@@ -64,8 +64,12 @@ pub(crate) fn submit_blocking_task(
 
     let handle = service
         .submit_tracked(move || {
-            started_tx.send(()).expect("test should receive task start signal");
-            release_rx.recv().map_err(|err| io::Error::other(err.to_string()))?;
+            started_tx
+                .send(())
+                .expect("test should receive task start signal");
+            release_rx
+                .recv()
+                .map_err(|err| io::Error::other(err.to_string()))?;
             Ok::<(), io::Error>(())
         })
         .expect("blocking task should be accepted");
