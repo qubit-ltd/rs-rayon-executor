@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2025 - 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::{
     collections::HashMap,
     sync::{
@@ -78,7 +76,9 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// A guard for the pending-task cancellation map.
-    fn lock_pending_tasks(&self) -> MutexGuard<'_, HashMap<usize, PendingCancel>> {
+    fn lock_pending_tasks(
+        &self,
+    ) -> MutexGuard<'_, HashMap<usize, PendingCancel>> {
         self.pending_tasks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -92,7 +92,9 @@ impl RayonExecutorServiceState {
     /// Returns the observed lifecycle state.
     pub(crate) fn lifecycle(&self) -> ExecutorServiceLifecycle {
         let lifecycle = self.stored_lifecycle();
-        if lifecycle != ExecutorServiceLifecycle::Running && self.has_no_active_tasks() {
+        if lifecycle != ExecutorServiceLifecycle::Running
+            && self.has_no_active_tasks()
+        {
             ExecutorServiceLifecycle::Terminated
         } else {
             lifecycle
@@ -106,12 +108,15 @@ impl RayonExecutorServiceState {
 
     /// Marks the service as shutting down.
     pub(crate) fn shutdown(&self) {
-        let _ = self
-            .lifecycle
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (lifecycle_from_u8(current) == ExecutorServiceLifecycle::Running)
+        let _ = self.lifecycle.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |current| {
+                (lifecycle_from_u8(current)
+                    == ExecutorServiceLifecycle::Running)
                     .then_some(ExecutorServiceLifecycle::ShuttingDown as u8)
-            });
+            },
+        );
     }
 
     /// Marks the service as stopping.
@@ -145,7 +150,11 @@ impl RayonExecutorServiceState {
     ///
     /// * `task_id` - Stable identifier of the accepted task.
     /// * `cancel` - Callback used to cancel the task before it starts.
-    pub(crate) fn register_pending_task(&self, task_id: usize, cancel: PendingCancel) {
+    pub(crate) fn register_pending_task(
+        &self,
+        task_id: usize,
+        cancel: PendingCancel,
+    ) {
         self.lock_pending_tasks().insert(task_id, cancel);
     }
 
@@ -187,7 +196,11 @@ impl RayonExecutorServiceState {
     ///
     /// `true` if the pending task was cancelled by this call, or `false` if it
     /// had already started, completed, or been cancelled by `stop`.
-    pub(crate) fn cancel_pending_task(&self, task_id: usize, cancel: &PendingCancel) -> bool {
+    pub(crate) fn cancel_pending_task(
+        &self,
+        task_id: usize,
+        cancel: &PendingCancel,
+    ) -> bool {
         let should_notify = {
             let mut pending_tasks = self.lock_pending_tasks();
             if !pending_tasks.contains_key(&task_id) {
@@ -224,14 +237,20 @@ impl RayonExecutorServiceState {
             let mut cancelled = 0usize;
             for (_, cancel) in pending_tasks.drain() {
                 let was_cancelled = cancel();
-                debug_assert!(was_cancelled, "drained pending rayon task should cancel before start",);
+                debug_assert!(
+                    was_cancelled,
+                    "drained pending rayon task should cancel before start",
+                );
                 if was_cancelled {
                     self.active_tasks.dec();
                     cancelled += 1;
                 }
             }
 
-            (StopReport::new(queued, running, cancelled), self.has_no_active_tasks())
+            (
+                StopReport::new(queued, running, cancelled),
+                self.has_no_active_tasks(),
+            )
         };
 
         if should_notify {

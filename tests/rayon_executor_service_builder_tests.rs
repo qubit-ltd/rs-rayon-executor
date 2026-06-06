@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2025 - 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Tests for [`RayonExecutorServiceBuilder`](qubit_rayon_executor::service::RayonExecutorServiceBuilder).
 
 mod common;
@@ -27,8 +25,14 @@ fn test_rayon_executor_service_builder_validates_configuration() {
         Err(RayonExecutorServiceBuildError::ZeroThreadCount),
     ));
 
-    let zero_stack = RayonExecutorService::builder().num_threads(1).stack_size(0).build();
-    assert!(matches!(zero_stack, Err(RayonExecutorServiceBuildError::ZeroStackSize),));
+    let zero_stack = RayonExecutorService::builder()
+        .num_threads(1)
+        .stack_size(0)
+        .build();
+    assert!(matches!(
+        zero_stack,
+        Err(RayonExecutorServiceBuildError::ZeroStackSize),
+    ));
 }
 
 #[test]

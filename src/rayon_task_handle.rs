@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2025 - 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::{
     future::IntoFuture,
     sync::Arc,
@@ -32,7 +30,8 @@ use crate::{
     rayon_executor_service_state::RayonExecutorServiceState,
 };
 
-/// Tracked handle returned by [`crate::RayonExecutorService`] for accepted tasks.
+/// Tracked handle returned by [`crate::RayonExecutorService`] for accepted
+/// tasks.
 ///
 /// This handle supports blocking [`Self::get`], asynchronous `.await`, status
 /// inspection, and best-effort cancellation before a Rayon worker starts the
@@ -198,7 +197,9 @@ where
             return CancelResult::Cancelled;
         }
         match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
+            TaskStatus::Pending | TaskStatus::Running => {
+                CancelResult::AlreadyRunning
+            }
             _ => CancelResult::AlreadyFinished,
         }
     }
