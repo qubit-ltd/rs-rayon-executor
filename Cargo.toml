@@ -35,9 +35,9 @@ rayon = "1.12"
 thiserror = "2.0"
 
 qubit-atomic = "0.13"
-qubit-executor = "0.7"
-qubit-function = "0.15"
-qubit-lock = { default-features = false, version = "0.9" }
+qubit-executor = { version = "0.7", path = "../rs-executor" }
+qubit-function = { version = "0.16.0", path = "../rs-function" }
+qubit-lock = { default-features = false, version = "0.10.0", path = "../rs-lock" }
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
