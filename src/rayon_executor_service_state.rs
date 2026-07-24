@@ -274,8 +274,8 @@ impl RayonExecutorServiceState {
     /// Publishes termination and wakes waiters when no task remains active.
     pub(crate) fn notify_if_terminated(&self) {
         if self.is_not_running() && self.has_no_active_tasks() {
-            self.terminated.with_write(|terminated| *terminated = true);
-            self.terminated.notify_all();
+            self.terminated
+                .with_write_notify_all(|terminated| *terminated = true);
         }
     }
 }
