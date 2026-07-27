@@ -5,29 +5,18 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    future::IntoFuture,
-    sync::Arc,
-};
+use std::{future::IntoFuture, sync::Arc};
 
 use qubit_executor::{
-    CancelResult,
-    TaskResult,
-    TaskStatus,
-    TrackedTask,
-    TryGet,
+    CancelResult, TaskResult, TaskStatus, TrackedTask, TryGet,
     task::{
         TaskHandleFuture,
-        spi::{
-            TaskResultHandle,
-            TrackedTaskHandle,
-        },
+        spi::{TaskResultHandle, TrackedTaskHandle},
     },
 };
 
 use crate::{
-    pending_cancel::PendingCancel,
-    rayon_executor_service_state::RayonExecutorServiceState,
+    pending_cancel::PendingCancel, rayon_executor_service_state::RayonExecutorServiceState,
 };
 
 /// Tracked handle returned by [`crate::RayonExecutorService`] for accepted
@@ -197,9 +186,7 @@ where
             return CancelResult::Cancelled;
         }
         match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => {
-                CancelResult::AlreadyRunning
-            }
+            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
             _ => CancelResult::AlreadyFinished,
         }
     }
