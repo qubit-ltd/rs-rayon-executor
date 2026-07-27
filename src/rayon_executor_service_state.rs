@@ -11,12 +11,16 @@ use std::{
         Mutex, MutexGuard,
         atomic::{AtomicU8, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use qubit_atomic::AtomicCount;
 use qubit_executor::service::{ExecutorServiceLifecycle, StopReport};
-use qubit_lock::ParkingLotMonitor;
+use qubit_lock::{
+    ParkingLotMonitor,
+    TimeError,
+    WaitTimeoutResult,
+};
 
 use crate::pending_cancel::PendingCancel;
 
@@ -251,19 +255,25 @@ impl RayonExecutorServiceState {
 
     /// Waits until termination or the supplied monotonic deadline expires.
     pub(crate) fn wait_for_termination_timeout(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        let mut terminated = self.terminated.lock();
-        loop {
-            if *terminated {
+        let deadline = match self.terminated.timer().now().checked_add(timeout) {
+            Ok(deadline) => deadline,
+            Err(TimeError::InstantOverflow) => {
+                self.wait_for_termination();
                 return true;
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
+            Err(error) => panic!("Rayon executor deadline construction failed: {error}"),
+        };
+        match self
+            .terminated
+            .wait_until_ready_with_deadline(deadline, |terminated| *terminated)
+        {
+            Ok(WaitTimeoutResult::Ready(())) => true,
+            Ok(WaitTimeoutResult::TimedOut) => false,
+            Err(TimeError::InstantOverflow) => {
+                self.wait_for_termination();
+                true
             }
-            let _wait_status = terminated
-                .wait_for(remaining)
-                .expect("standard Timer should register");
+            Err(error) => panic!("Rayon executor termination wait failed: {error}"),
         }
     }
 
