@@ -5,10 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    sync::Arc,
-    thread,
-};
+use std::{sync::Arc, thread};
 
 use rayon::ThreadPoolBuilder as RayonThreadPoolBuilder;
 
@@ -92,9 +89,7 @@ impl RayonExecutorServiceBuilder {
     ///
     /// Returns [`RayonExecutorServiceBuildError`] if the thread count or stack
     /// size is zero, or if Rayon rejects the thread-pool configuration.
-    pub fn build(
-        self,
-    ) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
+    pub fn build(self) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
         if self.num_threads == 0 {
             return Err(RayonExecutorServiceBuildError::ZeroThreadCount);
         }
