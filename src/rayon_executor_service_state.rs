@@ -21,12 +21,9 @@ use std::{
 
 use qubit_atomic::AtomicCount;
 use qubit_clock::TimeError;
-use qubit_executor::{
-    service::{
-        ExecutorServiceLifecycle,
-        StopReport,
-    },
-    wait_until_ready_with_total_timeout,
+use qubit_executor::service::{
+    ExecutorServiceLifecycle,
+    StopReport,
 };
 use qubit_lock::ParkingLotMonitor;
 
@@ -281,12 +278,12 @@ impl RayonExecutorServiceState {
         &self,
         timeout: Duration,
     ) -> bool {
-        match wait_until_ready_with_total_timeout(
-            &self.terminated,
-            timeout,
-            |terminated| *terminated,
-        ) {
-            Ok(ready) => ready,
+        match self
+            .terminated
+            .wait_until_ready_with_total_timeout(timeout, |terminated| {
+                *terminated
+            }) {
+            Ok(result) => result.is_ready(),
             Err(TimeError::InstantOverflow) => {
                 self.wait_for_termination();
                 true
