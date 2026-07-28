@@ -21,14 +21,14 @@ use std::{
 
 use qubit_atomic::AtomicCount;
 use qubit_clock::TimeError;
-use qubit_executor::service::{
-    ExecutorServiceLifecycle,
-    StopReport,
+use qubit_executor::{
+    service::{
+        ExecutorServiceLifecycle,
+        StopReport,
+    },
+    wait_until_ready_with_total_timeout,
 };
-use qubit_lock::{
-    ParkingLotMonitor,
-    WaitTimeoutResult,
-};
+use qubit_lock::ParkingLotMonitor;
 
 use crate::pending_cancel::PendingCancel;
 
@@ -276,27 +276,17 @@ impl RayonExecutorServiceState {
         self.terminated.wait_until(|terminated| *terminated, |_| ());
     }
 
-    /// Waits until termination or the supplied monotonic deadline expires.
+    /// Waits until termination or the total timeout expires.
     pub(crate) fn wait_for_termination_timeout(
         &self,
         timeout: Duration,
     ) -> bool {
-        let deadline = match self.terminated.timer().deadline_after(timeout) {
-            Ok(deadline) => deadline,
-            Err(TimeError::InstantOverflow) => {
-                self.wait_for_termination();
-                return true;
-            }
-            Err(error) => {
-                panic!("Rayon executor deadline construction failed: {error}")
-            }
-        };
-        match self
-            .terminated
-            .wait_until_ready_with_deadline(deadline, |terminated| *terminated)
-        {
-            Ok(WaitTimeoutResult::Ready(())) => true,
-            Ok(WaitTimeoutResult::TimedOut) => false,
+        match wait_until_ready_with_total_timeout(
+            &self.terminated,
+            timeout,
+            |terminated| *terminated,
+        ) {
+            Ok(ready) => ready,
             Err(TimeError::InstantOverflow) => {
                 self.wait_for_termination();
                 true
