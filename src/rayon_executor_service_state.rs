@@ -20,7 +20,6 @@ use std::{
 };
 
 use qubit_atomic::AtomicCount;
-use qubit_clock::TimeError;
 use qubit_executor::service::{
     ExecutorServiceLifecycle,
     StopReport,
@@ -270,7 +269,7 @@ impl RayonExecutorServiceState {
 
     /// Blocks until shutdown or stop has completed and no tasks remain active.
     pub(crate) fn wait_for_termination(&self) {
-        self.terminated.wait_until(|terminated| *terminated, |_| ());
+        self.terminated.wait_until_ready(|terminated| *terminated);
     }
 
     /// Waits until termination or the total timeout expires.
@@ -284,10 +283,6 @@ impl RayonExecutorServiceState {
                 *terminated
             }) {
             Ok(result) => result.is_ready(),
-            Err(TimeError::InstantOverflow) => {
-                self.wait_for_termination();
-                true
-            }
             Err(error) => {
                 panic!("Rayon executor termination wait failed: {error}")
             }
