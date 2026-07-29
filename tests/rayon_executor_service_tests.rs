@@ -11,6 +11,10 @@ mod common;
 
 use std::{
     io,
+    panic::{
+        AssertUnwindSafe,
+        catch_unwind,
+    },
     sync::{
         Arc,
         Barrier,
@@ -19,6 +23,7 @@ use std::{
             Ordering,
         },
     },
+    time::Duration,
 };
 
 use qubit_executor::TaskExecutionError;
@@ -115,6 +120,20 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
     service.wait_termination();
     assert!(service.is_not_running());
     assert!(service.is_terminated());
+}
+
+#[test]
+fn test_rayon_executor_service_wait_termination_timeout_rejects_overflow() {
+    let service =
+        RayonExecutorService::new().expect("service should be created");
+    service.shutdown();
+    service.wait_termination();
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        service.wait_termination_timeout(Duration::MAX)
+    }));
+
+    assert!(result.is_err());
 }
 
 #[test]
