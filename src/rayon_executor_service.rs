@@ -5,11 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    panic,
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use qubit_function::{
     Callable,
@@ -143,9 +139,6 @@ impl RayonExecutorService {
                 return Err(SubmissionError::Shutdown);
             }
             ExecutionOutcome::TaskFailed(error) => return Err(error),
-            ExecutionOutcome::Panicked(panic) => {
-                panic::resume_unwind(panic.into_payload())
-            }
         };
 
         let completion_for_run = completion;
@@ -207,9 +200,6 @@ impl RayonExecutorService {
             }
             ExecutionOutcome::ConditionNotMet => Err(SubmissionError::Shutdown),
             ExecutionOutcome::TaskFailed(error) => Err(error),
-            ExecutionOutcome::Panicked(panic) => {
-                panic::resume_unwind(panic.into_payload())
-            }
         }
     }
 }
