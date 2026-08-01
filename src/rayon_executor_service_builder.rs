@@ -115,9 +115,7 @@ impl RayonExecutorServiceBuilder {
         let state = Arc::new(RayonExecutorServiceState::new());
         let admission_executor = self.admission_executor.unwrap_or_else(|| {
             let state_for_predicate = Arc::clone(&state);
-            DclExecutor::builder()
-                .when(move || !state_for_predicate.is_not_running())
-                .build()
+            DclExecutor::new(move || !state_for_predicate.is_not_running())
         });
         Ok(RayonExecutorService {
             pool,
