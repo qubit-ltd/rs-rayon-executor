@@ -5,11 +5,9 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    sync::Arc,
-    thread,
-};
+use std::{sync::Arc, thread};
 
+use qubit_dcl::DclExecutor;
 use rayon::ThreadPoolBuilder as RayonThreadPoolBuilder;
 
 use crate::{
@@ -25,7 +23,7 @@ const DEFAULT_THREAD_NAME_PREFIX: &str = "qubit-rayon-executor";
 ///
 /// The default builder uses the available CPU parallelism and names workers
 /// with the `qubit-rayon-executor` prefix.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RayonExecutorServiceBuilder {
     /// Number of Rayon worker threads to create.
     num_threads: usize,
@@ -33,6 +31,8 @@ pub struct RayonExecutorServiceBuilder {
     thread_name_prefix: String,
     /// Optional worker stack size in bytes.
     stack_size: Option<usize>,
+
+    admission_executor: Option<DclExecutor>,
 }
 
 impl RayonExecutorServiceBuilder {
@@ -92,9 +92,7 @@ impl RayonExecutorServiceBuilder {
     ///
     /// Returns [`RayonExecutorServiceBuildError`] if the thread count or stack
     /// size is zero, or if Rayon rejects the thread-pool configuration.
-    pub fn build(
-        self,
-    ) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
+    pub fn build(self) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
         if self.num_threads == 0 {
             return Err(RayonExecutorServiceBuildError::ZeroThreadCount);
         }
@@ -109,9 +107,17 @@ impl RayonExecutorServiceBuilder {
             builder = builder.stack_size(stack_size);
         }
         let pool = Arc::new(builder.build()?);
+        let state = Arc::new(RayonExecutorServiceState::new());
+        let admission_executor = self.admission_executor.unwrap_or_else(|| {
+            let state_for_predicate = Arc::clone(&state);
+            DclExecutor::builder()
+                .when(move || !state_for_predicate.is_not_running())
+                .build()
+        });
         Ok(RayonExecutorService {
             pool,
-            state: Arc::new(RayonExecutorServiceState::new()),
+            state,
+            admission_executor,
         })
     }
 }
@@ -127,6 +133,7 @@ impl Default for RayonExecutorServiceBuilder {
             num_threads: default_rayon_thread_count(),
             thread_name_prefix: DEFAULT_THREAD_NAME_PREFIX.to_owned(),
             stack_size: None,
+            admission_executor: None,
         }
     }
 }
