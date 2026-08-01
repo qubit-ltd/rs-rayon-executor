@@ -34,6 +34,8 @@ doctest = true
 rayon = "1.12"
 thiserror = "2.0"
 
+parking_lot = "0.12"
+qubit-dcl = { path = "../rs-dcl" }
 qubit-atomic = "0.13"
 qubit-executor = { version = "0.8", path = "../rs-executor" }
 qubit-function = "0.16"
