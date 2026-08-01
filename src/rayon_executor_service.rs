@@ -5,18 +5,33 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{panic, sync::Arc, time::Duration};
+use std::{
+    panic,
+    sync::Arc,
+    time::Duration,
+};
 
-use qubit_function::{Callable, Runnable};
+use qubit_function::{
+    Callable,
+    Runnable,
+};
 use rayon::ThreadPool as RayonThreadPool;
 
 use qubit_executor::{
     TaskHandle,
-    task::spi::{TaskEndpointPair, TaskRunner, TaskSlot, TaskSlotCell},
+    task::spi::{
+        TaskEndpointPair,
+        TaskRunner,
+        TaskSlot,
+        TaskSlotCell,
+    },
 };
 
 use qubit_executor::service::{
-    ExecutorService, ExecutorServiceLifecycle, StopReport, SubmissionError,
+    ExecutorService,
+    ExecutorServiceLifecycle,
+    StopReport,
+    SubmissionError,
 };
 
 use qubit_dcl::ExecutionOutcome;
@@ -25,7 +40,8 @@ use crate::{
     pending_cancel::PendingCancel,
     rayon_executor_service_build_error::RayonExecutorServiceBuildError,
     rayon_executor_service_builder::RayonExecutorServiceBuilder,
-    rayon_executor_service_state::RayonExecutorServiceState, rayon_task_handle::RayonTaskHandle,
+    rayon_executor_service_state::RayonExecutorServiceState,
+    rayon_task_handle::RayonTaskHandle,
 };
 
 /// Rayon-backed executor service for CPU-bound synchronous tasks.
@@ -99,51 +115,56 @@ impl RayonExecutorService {
         F: FnOnce(TaskEndpointPair<R, E>) -> (H, TaskSlot<R, E>),
     {
         let mut split_fn = Some(split);
-        let (handle, task_id, cancel, completion) =
-            match self
-                .admission_executor
-                .run(self.state.submission_lock(), || {
-                    if self.state.is_not_running() {
-                        return Err(SubmissionError::Shutdown);
-                    }
+        let (handle, task_id, cancel, completion) = match self
+            .admission_executor
+            .run(self.state.submission_lock(), || {
+                if self.state.is_not_running() {
+                    return Err(SubmissionError::Shutdown);
+                }
 
-                    let task_id = self.state.next_task_id();
-                    self.state.on_task_accepted();
-                    let split = split_fn
-                        .take()
-                        .expect("callable split function must be available");
-                    let (handle, completion) = split(TaskEndpointPair::new());
-                    completion.accept();
-                    let completion = Arc::new(TaskSlotCell::new(completion));
-                    let completion_for_cancel = Arc::clone(&completion);
-                    let cancel: PendingCancel =
-                        Arc::new(move || completion_for_cancel.cancel_unstarted());
-                    self.state
-                        .register_pending_task(task_id, Arc::clone(&cancel));
+                let task_id = self.state.next_task_id();
+                self.state.on_task_accepted();
+                let split = split_fn
+                    .take()
+                    .expect("callable split function must be available");
+                let (handle, completion) = split(TaskEndpointPair::new());
+                completion.accept();
+                let completion = Arc::new(TaskSlotCell::new(completion));
+                let completion_for_cancel = Arc::clone(&completion);
+                let cancel: PendingCancel =
+                    Arc::new(move || completion_for_cancel.cancel_unstarted());
+                self.state
+                    .register_pending_task(task_id, Arc::clone(&cancel));
 
-                    Ok((handle, task_id, cancel, completion))
-                }) {
-                ExecutionOutcome::Success(result) => result,
-                ExecutionOutcome::ConditionNotMet => return Err(SubmissionError::Shutdown),
-                ExecutionOutcome::TaskFailed(error) => return Err(error),
-                ExecutionOutcome::Panicked(panic) => panic::resume_unwind(panic.into_payload()),
-            };
+                Ok((handle, task_id, cancel, completion))
+            }) {
+            ExecutionOutcome::Success(result) => result,
+            ExecutionOutcome::ConditionNotMet => {
+                return Err(SubmissionError::Shutdown);
+            }
+            ExecutionOutcome::TaskFailed(error) => return Err(error),
+            ExecutionOutcome::Panicked(panic) => {
+                panic::resume_unwind(panic.into_payload())
+            }
+        };
 
         let completion_for_run = completion;
         let state_for_run = Arc::clone(&self.state);
         self.pool.spawn_fifo(move || {
             let mut running_completion = None;
-            if !state_for_run.start_pending_task(task_id, || match completion_for_run.try_start() {
-                Some(running) => {
-                    running_completion = Some(running);
-                    true
+            if !state_for_run.start_pending_task(task_id, || {
+                match completion_for_run.try_start() {
+                    Some(running) => {
+                        running_completion = Some(running);
+                        true
+                    }
+                    None => false,
                 }
-                None => false,
             }) {
                 return;
             }
-            let running_completion =
-                running_completion.expect("claimed pending task should own a running slot");
+            let running_completion = running_completion
+                .expect("claimed pending task should own a running slot");
             TaskRunner::new(task).run_started(running_completion);
             state_for_run.on_task_completed();
         });
@@ -178,14 +199,17 @@ impl RayonExecutorService {
                         return;
                     }
                     let mut task = task;
-                    let _ignored = TaskRunner::new(move || task.run()).call::<(), E>();
+                    let _ignored =
+                        TaskRunner::new(move || task.run()).call::<(), E>();
                     state_for_run.on_task_completed();
                 });
                 Ok(())
             }
             ExecutionOutcome::ConditionNotMet => Err(SubmissionError::Shutdown),
             ExecutionOutcome::TaskFailed(error) => Err(error),
-            ExecutionOutcome::Panicked(panic) => panic::resume_unwind(panic.into_payload()),
+            ExecutionOutcome::Panicked(panic) => {
+                panic::resume_unwind(panic.into_payload())
+            }
         }
     }
 }
@@ -226,13 +250,17 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] if shutdown has already been
     /// requested before the task is accepted.
-    fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, SubmissionError>
+    fn submit_callable<C, R, E>(
+        &self,
+        task: C,
+    ) -> Result<Self::ResultHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
         E: Send + 'static,
     {
-        let (handle, _, _) = self.submit_callable_with(task, TaskEndpointPair::into_parts)?;
+        let (handle, _, _) =
+            self.submit_callable_with(task, TaskEndpointPair::into_parts)?;
         Ok(handle)
     }
 
@@ -246,8 +274,8 @@ impl ExecutorService for RayonExecutorService {
         R: Send + 'static,
         E: Send + 'static,
     {
-        let (handle, task_id, cancel) =
-            self.submit_callable_with(task, TaskEndpointPair::into_tracked_parts)?;
+        let (handle, task_id, cancel) = self
+            .submit_callable_with(task, TaskEndpointPair::into_tracked_parts)?;
         Ok(RayonTaskHandle::new(
             handle,
             task_id,
