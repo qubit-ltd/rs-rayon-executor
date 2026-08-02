@@ -137,6 +137,20 @@ fn test_rayon_executor_service_wait_termination_timeout_rejects_overflow() {
 }
 
 #[test]
+fn test_rayon_executor_service_wait_termination_timeout_reports_pending() {
+    let service = create_single_worker_service();
+    let (_running, release_tx) = submit_blocking_task(&service);
+
+    service.shutdown();
+    assert!(!service.wait_termination_timeout(Duration::from_millis(1)));
+
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
+    service.wait_termination();
+}
+
+#[test]
 fn test_rayon_executor_service_shutdown_allows_queued_tasks_to_finish() {
     let service = create_single_worker_service();
     let (running, release_tx) = submit_blocking_task(&service);
