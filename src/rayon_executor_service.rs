@@ -5,7 +5,10 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use qubit_function::{
     Callable,
@@ -114,10 +117,6 @@ impl RayonExecutorService {
         let (handle, task_id, cancel, completion) = match self
             .admission_executor
             .run(self.state.submission_lock(), || {
-                if self.state.is_not_running() {
-                    return Err(SubmissionError::Shutdown);
-                }
-
                 let task_id = self.state.next_task_id();
                 self.state.on_task_accepted();
                 let split = split_fn
@@ -173,10 +172,6 @@ impl RayonExecutorService {
         match self
             .admission_executor
             .run(self.state.submission_lock(), || {
-                if self.state.is_not_running() {
-                    return Err(SubmissionError::Shutdown);
-                }
-
                 let task_id = self.state.next_task_id();
                 self.state.on_task_accepted();
                 let cancel: PendingCancel = Arc::new(|| true);
