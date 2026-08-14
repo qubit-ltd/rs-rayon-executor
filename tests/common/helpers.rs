@@ -7,17 +7,13 @@
 // =============================================================================
 #![allow(dead_code)]
 
-use std::{
-    io,
-    sync::mpsc,
-    time::Duration,
-};
+use std::io;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use qubit_executor::service::ExecutorService;
-use qubit_rayon_executor::{
-    RayonExecutorService,
-    RayonTaskHandle,
-};
+use qubit_rayon_executor::RayonExecutorService;
+use qubit_rayon_executor::RayonTaskHandle;
 
 /// Returns a successful unit task result for executor submission tests.
 pub(crate) fn ok_unit_task() -> Result<(), io::Error> {

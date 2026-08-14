@@ -9,10 +9,8 @@
 
 use std::error::Error;
 
-use qubit_rayon_executor::{
-    RayonExecutorService,
-    RayonExecutorServiceBuildError,
-};
+use qubit_rayon_executor::RayonExecutorService;
+use qubit_rayon_executor::RayonExecutorServiceBuildError;
 
 /// Extracts the build error from a builder result.
 fn expect_build_error(

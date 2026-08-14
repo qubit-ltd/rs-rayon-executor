@@ -12,10 +12,8 @@ mod common;
 use std::io;
 
 use qubit_executor::service::ExecutorService;
-use qubit_rayon_executor::{
-    RayonExecutorService,
-    RayonExecutorServiceBuildError,
-};
+use qubit_rayon_executor::RayonExecutorService;
+use qubit_rayon_executor::RayonExecutorServiceBuildError;
 
 #[test]
 fn test_rayon_executor_service_builder_validates_configuration() {

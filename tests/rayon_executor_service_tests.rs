@@ -9,38 +9,25 @@
 
 mod common;
 
-use std::{
-    io,
-    panic::{
-        AssertUnwindSafe,
-        catch_unwind,
-    },
-    sync::{
-        Arc,
-        Barrier,
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
-    },
-    time::Duration,
-};
+use std::io;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
+use std::sync::Arc;
+use std::sync::Barrier;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use qubit_executor::TaskExecutionError;
-use qubit_executor::service::{
-    ExecutorService,
-    ExecutorServiceLifecycle,
-    SubmissionError,
-};
-
+use qubit_executor::service::ExecutorService;
+use qubit_executor::service::ExecutorServiceLifecycle;
+use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
 
-use crate::common::helpers::{
-    create_single_worker_service,
-    ok_unit_task,
-    ok_usize_task,
-    submit_blocking_task,
-};
+use crate::common::helpers::create_single_worker_service;
+use crate::common::helpers::ok_unit_task;
+use crate::common::helpers::ok_usize_task;
+use crate::common::helpers::submit_blocking_task;
 
 #[test]
 fn test_rayon_executor_service_submit_acceptance_is_not_task_success() {
