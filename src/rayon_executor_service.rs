@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use qubit_dcl::DclExecutor;
 use qubit_dcl::ExecutionOutcome;
 use qubit_executor::TaskHandle;
 use qubit_executor::service::ExecutorService;
@@ -40,7 +41,7 @@ pub struct RayonExecutorService {
     /// Shared lifecycle and cancellation state.
     pub(crate) state: Arc<RayonExecutorServiceState>,
     /// Shared admission gate used for all submission points.
-    pub(crate) admission_executor: qubit_dcl::DclExecutor,
+    pub(crate) admission_executor: DclExecutor,
 }
 
 impl RayonExecutorService {

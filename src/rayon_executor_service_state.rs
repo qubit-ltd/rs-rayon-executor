@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use parking_lot::MutexGuard;
 use qubit_atomic::AtomicCount;
 use qubit_executor::service::ExecutorServiceLifecycle;
 use qubit_executor::service::StopReport;
@@ -57,13 +58,13 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// A guard for the submission lock.
-    pub(crate) fn lock_submission(&self) -> parking_lot::MutexGuard<'_, ()> {
+    pub(crate) fn lock_submission(&self) -> MutexGuard<'_, ()> {
         self.submission_lock.lock()
     }
 
     /// Returns the submission lock used for admission control.
     #[inline]
-    pub(crate) fn submission_lock(&self) -> &parking_lot::Mutex<()> {
+    pub(crate) fn submission_lock(&self) -> &Mutex<()> {
         &self.submission_lock
     }
 
@@ -74,7 +75,7 @@ impl RayonExecutorServiceState {
     /// A guard for the pending-task cancellation map.
     fn lock_pending_tasks(
         &self,
-    ) -> parking_lot::MutexGuard<'_, HashMap<usize, PendingCancel>> {
+    ) -> MutexGuard<'_, HashMap<usize, PendingCancel>> {
         self.pending_tasks.lock()
     }
 
