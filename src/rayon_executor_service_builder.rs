@@ -5,19 +5,15 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    sync::Arc,
-    thread,
-};
+use std::sync::Arc;
+use std::thread;
 
 use qubit_dcl::DclExecutor;
 use rayon::ThreadPoolBuilder as RayonThreadPoolBuilder;
 
-use crate::{
-    rayon_executor_service::RayonExecutorService,
-    rayon_executor_service_build_error::RayonExecutorServiceBuildError,
-    rayon_executor_service_state::RayonExecutorServiceState,
-};
+use crate::rayon_executor_service::RayonExecutorService;
+use crate::rayon_executor_service_build_error::RayonExecutorServiceBuildError;
+use crate::rayon_executor_service_state::RayonExecutorServiceState;
 
 /// Default thread name prefix used by [`RayonExecutorServiceBuilder`].
 const DEFAULT_THREAD_NAME_PREFIX: &str = "qubit-rayon-executor";

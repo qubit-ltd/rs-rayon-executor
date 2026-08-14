@@ -5,22 +5,16 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    collections::HashMap,
-    sync::atomic::{
-        AtomicU8,
-        AtomicUsize,
-        Ordering,
-    },
-    time::Duration,
-};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use qubit_atomic::AtomicCount;
-use qubit_executor::service::{
-    ExecutorServiceLifecycle,
-    StopReport,
-};
+use qubit_executor::service::ExecutorServiceLifecycle;
+use qubit_executor::service::StopReport;
 use qubit_lock::ParkingLotMonitor;
 
 use crate::pending_cancel::PendingCancel;

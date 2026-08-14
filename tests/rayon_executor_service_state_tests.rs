@@ -10,21 +10,17 @@
 
 mod common;
 
-use std::{
-    io,
-    sync::mpsc,
-};
+use std::io;
+use std::sync::mpsc;
 
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
-use crate::common::helpers::{
-    create_single_worker_service,
-    ok_usize_task,
-    submit_blocking_task,
-    wait_started,
-};
+use crate::common::helpers::create_single_worker_service;
+use crate::common::helpers::ok_usize_task;
+use crate::common::helpers::submit_blocking_task;
+use crate::common::helpers::wait_started;
 
 #[test]
 fn test_rayon_executor_service_state_stop_reports_running_and_queued() {

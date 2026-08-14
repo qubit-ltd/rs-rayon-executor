@@ -5,43 +5,28 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::{
-    sync::Arc,
-    time::Duration,
-};
-
-use qubit_function::{
-    Callable,
-    Runnable,
-};
-use rayon::ThreadPool as RayonThreadPool;
-
-use qubit_executor::{
-    TaskHandle,
-    task::spi::{
-        TaskEndpointPair,
-        TaskRunner,
-        TaskSlot,
-        TaskSlotCell,
-    },
-};
-
-use qubit_executor::service::{
-    ExecutorService,
-    ExecutorServiceLifecycle,
-    StopReport,
-    SubmissionError,
-};
+use std::sync::Arc;
+use std::time::Duration;
 
 use qubit_dcl::ExecutionOutcome;
+use qubit_executor::TaskHandle;
+use qubit_executor::service::ExecutorService;
+use qubit_executor::service::ExecutorServiceLifecycle;
+use qubit_executor::service::StopReport;
+use qubit_executor::service::SubmissionError;
+use qubit_executor::task::spi::TaskEndpointPair;
+use qubit_executor::task::spi::TaskRunner;
+use qubit_executor::task::spi::TaskSlot;
+use qubit_executor::task::spi::TaskSlotCell;
+use qubit_function::Callable;
+use qubit_function::Runnable;
+use rayon::ThreadPool as RayonThreadPool;
 
-use crate::{
-    pending_cancel::PendingCancel,
-    rayon_executor_service_build_error::RayonExecutorServiceBuildError,
-    rayon_executor_service_builder::RayonExecutorServiceBuilder,
-    rayon_executor_service_state::RayonExecutorServiceState,
-    rayon_task_handle::RayonTaskHandle,
-};
+use crate::pending_cancel::PendingCancel;
+use crate::rayon_executor_service_build_error::RayonExecutorServiceBuildError;
+use crate::rayon_executor_service_builder::RayonExecutorServiceBuilder;
+use crate::rayon_executor_service_state::RayonExecutorServiceState;
+use crate::rayon_task_handle::RayonTaskHandle;
 
 /// Rayon-backed executor service for CPU-bound synchronous tasks.
 ///

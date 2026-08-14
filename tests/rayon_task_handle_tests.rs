@@ -9,34 +9,24 @@
 
 mod common;
 
-use std::{
-    io,
-    thread,
-    time::{
-        Duration,
-        Instant,
-    },
-};
+use std::io;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
 
+use qubit_executor::CancelResult;
+use qubit_executor::TaskExecutionError;
+use qubit_executor::TaskStatus;
+use qubit_executor::TryGet;
 use qubit_executor::service::ExecutorService;
-use qubit_executor::task::spi::{
-    TaskResultHandle,
-    TrackedTaskHandle,
-};
-use qubit_executor::{
-    CancelResult,
-    TaskExecutionError,
-    TaskStatus,
-    TryGet,
-};
+use qubit_executor::task::spi::TaskResultHandle;
+use qubit_executor::task::spi::TrackedTaskHandle;
 use qubit_rayon_executor::RayonExecutorService;
 
-use crate::common::helpers::{
-    create_single_worker_service,
-    ok_usize_task,
-    submit_blocking_task,
-    wait_until,
-};
+use crate::common::helpers::create_single_worker_service;
+use crate::common::helpers::ok_usize_task;
+use crate::common::helpers::submit_blocking_task;
+use crate::common::helpers::wait_until;
 
 #[tokio::test]
 async fn test_rayon_task_handle_can_be_awaited() {
