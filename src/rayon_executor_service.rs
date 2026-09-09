@@ -100,49 +100,41 @@ impl RayonExecutorService {
         F: FnOnce(TaskEndpointPair<R, E>) -> (H, TaskSlot<R, E>),
     {
         let mut split_fn = Some(split);
-        let (handle, task_id, cancel, completion) = match self
-            .admission_executor
-            .run(self.state.submission_lock(), || {
+        let (handle, task_id, cancel, completion) =
+            match self.admission_executor.run(self.state.submission_lock(), || {
                 let task_id = self.state.next_task_id();
                 self.state.on_task_accepted();
-                let split = split_fn
-                    .take()
-                    .expect("callable split function must be available");
+                let split = split_fn.take().expect("callable split function must be available");
                 let (handle, completion) = split(TaskEndpointPair::new());
                 completion.accept();
                 let completion = Arc::new(TaskSlotCell::new(completion));
                 let completion_for_cancel = Arc::clone(&completion);
-                let cancel: PendingCancel =
-                    Arc::new(move || completion_for_cancel.cancel_unstarted());
-                self.state
-                    .register_pending_task(task_id, Arc::clone(&cancel));
+                let cancel: PendingCancel = Arc::new(move || completion_for_cancel.cancel_unstarted());
+                self.state.register_pending_task(task_id, Arc::clone(&cancel));
 
                 Ok((handle, task_id, cancel, completion))
             }) {
-            ExecutionOutcome::Success(result) => result,
-            ExecutionOutcome::ConditionNotMet => {
-                return Err(SubmissionError::Shutdown);
-            }
-            ExecutionOutcome::TaskFailed(error) => return Err(error),
-        };
+                ExecutionOutcome::Success(result) => result,
+                ExecutionOutcome::ConditionNotMet => {
+                    return Err(SubmissionError::Shutdown);
+                }
+                ExecutionOutcome::TaskFailed(error) => return Err(error),
+            };
 
         let completion_for_run = completion;
         let state_for_run = Arc::clone(&self.state);
         self.pool.spawn_fifo(move || {
             let mut running_completion = None;
-            if !state_for_run.start_pending_task(task_id, || {
-                match completion_for_run.try_start() {
-                    Some(running) => {
-                        running_completion = Some(running);
-                        true
-                    }
-                    None => false,
+            if !state_for_run.start_pending_task(task_id, || match completion_for_run.try_start() {
+                Some(running) => {
+                    running_completion = Some(running);
+                    true
                 }
+                None => false,
             }) {
                 return;
             }
-            let running_completion = running_completion
-                .expect("claimed pending task should own a running slot");
+            let running_completion = running_completion.expect("claimed pending task should own a running slot");
             TaskRunner::new(task).run_started(running_completion);
             state_for_run.on_task_completed();
         });
@@ -155,17 +147,14 @@ impl RayonExecutorService {
         T: Runnable<E> + Send + 'static,
         E: Send + 'static,
     {
-        match self
-            .admission_executor
-            .run(self.state.submission_lock(), || {
-                let task_id = self.state.next_task_id();
-                self.state.on_task_accepted();
-                let cancel: PendingCancel = Arc::new(|| true);
-                self.state
-                    .register_pending_task(task_id, Arc::clone(&cancel));
-                drop(cancel);
-                Ok(task_id)
-            }) {
+        match self.admission_executor.run(self.state.submission_lock(), || {
+            let task_id = self.state.next_task_id();
+            self.state.on_task_accepted();
+            let cancel: PendingCancel = Arc::new(|| true);
+            self.state.register_pending_task(task_id, Arc::clone(&cancel));
+            drop(cancel);
+            Ok(task_id)
+        }) {
             ExecutionOutcome::Success(task_id) => {
                 let state_for_run = Arc::clone(&self.state);
                 self.pool.spawn_fifo(move || {
@@ -173,8 +162,7 @@ impl RayonExecutorService {
                         return;
                     }
                     let mut task = task;
-                    let _ignored =
-                        TaskRunner::new(move || task.run()).call::<(), E>();
+                    let _ignored = TaskRunner::new(move || task.run()).call::<(), E>();
                     state_for_run.on_task_completed();
                 });
                 Ok(())
@@ -221,38 +209,25 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] if shutdown has already been
     /// requested before the task is accepted.
-    fn submit_callable<C, R, E>(
-        &self,
-        task: C,
-    ) -> Result<Self::ResultHandle<R, E>, SubmissionError>
+    fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
         E: Send + 'static,
     {
-        let (handle, _, _) =
-            self.submit_callable_with(task, TaskEndpointPair::into_parts)?;
+        let (handle, _, _) = self.submit_callable_with(task, TaskEndpointPair::into_parts)?;
         Ok(handle)
     }
 
     /// Accepts a callable and schedules it with a tracked handle.
-    fn submit_tracked_callable<C, R, E>(
-        &self,
-        task: C,
-    ) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
+    fn submit_tracked_callable<C, R, E>(&self, task: C) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
         E: Send + 'static,
     {
-        let (handle, task_id, cancel) = self
-            .submit_callable_with(task, TaskEndpointPair::into_tracked_parts)?;
-        Ok(RayonTaskHandle::new(
-            handle,
-            task_id,
-            Arc::clone(&self.state),
-            cancel,
-        ))
+        let (handle, task_id, cancel) = self.submit_callable_with(task, TaskEndpointPair::into_tracked_parts)?;
+        Ok(RayonTaskHandle::new(handle, task_id, Arc::clone(&self.state), cancel))
     }
 
     /// Stops accepting new tasks.

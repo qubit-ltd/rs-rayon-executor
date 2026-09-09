@@ -30,13 +30,10 @@ use crate::common::helpers::wait_until;
 
 #[tokio::test]
 async fn test_rayon_task_handle_can_be_awaited() {
-    let service =
-        RayonExecutorService::new().expect("service should be created");
+    let service = RayonExecutorService::new().expect("service should be created");
 
     let handle = service
-        .submit_tracked_callable(
-            ok_usize_task as fn() -> Result<usize, io::Error>,
-        )
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
     assert_eq!(handle.await.expect("handle should await result"), 42);
@@ -49,9 +46,7 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
     let service = create_single_worker_service();
     let (first, release_tx) = submit_blocking_task(&service);
     let queued = service
-        .submit_tracked_callable(
-            ok_usize_task as fn() -> Result<usize, io::Error>,
-        )
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
 
     assert_eq!(queued.cancel(), CancelResult::Cancelled);
@@ -67,13 +62,10 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
 
 #[test]
 fn test_rayon_task_handle_reports_panicked_task() {
-    let service =
-        RayonExecutorService::new().expect("service should be created");
+    let service = RayonExecutorService::new().expect("service should be created");
 
     let handle = service
-        .submit_tracked(|| -> Result<(), io::Error> {
-            panic!("rayon service panic")
-        })
+        .submit_tracked(|| -> Result<(), io::Error> { panic!("rayon service panic") })
         .expect("service should accept panicking task");
 
     assert!(matches!(handle.get(), Err(TaskExecutionError::Panicked)));
@@ -85,9 +77,7 @@ fn test_rayon_task_handle_reports_panicked_task() {
 fn test_rayon_task_handle_cancel_after_completion_returns_false() {
     let service = create_single_worker_service();
     let handle = service
-        .submit_tracked_callable(
-            ok_usize_task as fn() -> Result<usize, io::Error>,
-        )
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
     wait_until(|| handle.is_done());
@@ -115,8 +105,7 @@ fn test_rayon_task_handle_cancel_running_reports_already_running() {
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
-    <_ as TaskResultHandle<(), io::Error>>::get(handle)
-        .expect("task should complete");
+    <_ as TaskResultHandle<(), io::Error>>::get(handle).expect("task should complete");
     service.shutdown();
     service.wait_termination();
 }
@@ -133,16 +122,12 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
         let queued_handles = (0..QUEUED_TASKS)
             .map(|_| {
                 service
-                    .submit_tracked_callable(
-                        ok_usize_task as fn() -> Result<usize, io::Error>,
-                    )
+                    .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
                     .expect("queued task should be accepted")
             })
             .collect::<Vec<_>>();
 
-        release_tx
-            .send(())
-            .expect("running task should receive release signal");
+        release_tx.send(()).expect("running task should receive release signal");
         for handle in &queued_handles {
             assert_ne!(
                 handle.cancel(),
@@ -151,9 +136,7 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
             );
         }
 
-        running
-            .get()
-            .expect("running task should complete normally");
+        running.get().expect("running task should complete normally");
         for handle in queued_handles {
             let _ = handle.get();
         }
@@ -168,9 +151,7 @@ fn test_rayon_task_handle_reports_status_and_try_get_states() {
     let (first, release_tx) = submit_blocking_task(&service);
 
     let queued = service
-        .submit_tracked_callable(
-            ok_usize_task as fn() -> Result<usize, io::Error>,
-        )
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("queued task should be accepted");
     assert_eq!(queued.status(), TaskStatus::Pending);
 

@@ -36,32 +36,22 @@ fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     assert_eq!(report.queued, 1);
     assert_eq!(report.cancelled, 1);
     assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
-    release_tx
-        .send(())
-        .expect("running task should receive release signal");
-    running
-        .get()
-        .expect("running task should complete after release");
+    release_tx.send(()).expect("running task should receive release signal");
+    running.get().expect("running task should complete after release");
     service.wait_termination();
     assert!(service.is_terminated());
 }
 
 #[tokio::test]
-async fn test_rayon_executor_service_state_notifies_after_last_task_completes()
-{
-    let service =
-        RayonExecutorService::new().expect("service should be created");
+async fn test_rayon_executor_service_state_notifies_after_last_task_completes() {
+    let service = RayonExecutorService::new().expect("service should be created");
     let (release_tx, release_rx) = mpsc::channel();
     let (started_tx, started_rx) = mpsc::channel();
 
     let handle = service
         .submit_callable(move || {
-            started_tx
-                .send(())
-                .expect("test should receive task start signal");
-            release_rx
-                .recv()
-                .map_err(|err| io::Error::other(err.to_string()))?;
+            started_tx.send(()).expect("test should receive task start signal");
+            release_rx.recv().map_err(|err| io::Error::other(err.to_string()))?;
             Ok::<usize, io::Error>(42)
         })
         .expect("task should be accepted");
@@ -78,13 +68,8 @@ async fn test_rayon_executor_service_state_notifies_after_last_task_completes()
         "termination should wait while the accepted task is active",
     );
 
-    release_tx
-        .send(())
-        .expect("running task should receive release signal");
-    assert_eq!(
-        handle.await.expect("task should complete after release"),
-        42
-    );
+    release_tx.send(()).expect("running task should receive release signal");
+    assert_eq!(handle.await.expect("task should complete after release"), 42);
     waiter
         .await
         .expect("termination waiter should finish after final task completes");
