@@ -187,9 +187,7 @@ where
             return CancelResult::Cancelled;
         }
         match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => {
-                CancelResult::AlreadyRunning
-            }
+            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
             _ => CancelResult::AlreadyFinished,
         }
     }

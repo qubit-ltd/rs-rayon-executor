@@ -91,9 +91,7 @@ impl RayonExecutorServiceBuilder {
     ///
     /// Returns [`RayonExecutorServiceBuildError`] if the thread count or stack
     /// size is zero, or if Rayon rejects the thread-pool configuration.
-    pub fn build(
-        self,
-    ) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
+    pub fn build(self) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
         if self.num_threads == 0 {
             return Err(RayonExecutorServiceBuildError::ZeroThreadCount);
         }
@@ -143,7 +141,5 @@ impl Default for RayonExecutorServiceBuilder {
 ///
 /// The available CPU parallelism, or `1` if it cannot be detected.
 fn default_rayon_thread_count() -> usize {
-    thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
+    thread::available_parallelism().map(usize::from).unwrap_or(1)
 }
