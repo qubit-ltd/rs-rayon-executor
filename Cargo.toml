@@ -43,4 +43,4 @@ qubit-function = "0.18"
 qubit-lock = { default-features = false, features = ["monitor", "parking-lot"], version = "0.14" }
 
 [dev-dependencies]
-tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "^1.53", features = ["macros", "rt-multi-thread", "time"] }
