@@ -29,7 +29,7 @@ pub use module::{
 rustup toolchain install nightly --component rustfmt
 
 # Format code using the same configuration as CI
-cargo +nightly fmt -- --config-path .rs-ci/rustfmt.toml
+cargo +nightly fmt -- --config-path .infra/style/rustfmt.toml
 ```
 
 ### Option 2: CI-Style Local Check
@@ -51,7 +51,7 @@ Both the local CI check script (`ci-check.sh`) and CircleCI configuration (`.cir
 
 ## Configuration
 
-The formatting configuration is defined in `.rs-ci/rustfmt.toml`:
+The formatting configuration is defined in `.infra/style/rustfmt.toml`:
 
 ```toml
 # Format imports with vertical layout (each item on its own line within braces)
@@ -75,7 +75,7 @@ This is the **only configuration option** needed to achieve our desired formatti
 Make sure your code is formatted before committing:
 
 ```bash
-cargo +nightly fmt -- --config-path .rs-ci/rustfmt.toml
+cargo +nightly fmt -- --config-path .infra/style/rustfmt.toml
 ```
 
 ### Nightly toolchain issues
