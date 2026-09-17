@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicU8;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
@@ -247,13 +248,19 @@ impl RayonExecutorServiceState {
 
     /// Waits until termination or the total timeout expires.
     pub(crate) fn wait_for_termination_timeout(&self, timeout: Duration) -> bool {
-        match self
-            .terminated
-            .wait_until_ready_with_total_timeout(timeout, |terminated| *terminated)
-        {
-            Ok(result) => result.is_ready(),
-            Err(error) => {
-                panic!("Rayon executor termination wait failed: {error}")
+        let started = Instant::now();
+        loop {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return self.terminated.with_read(|terminated| *terminated);
+            }
+            match self
+                .terminated
+                .wait_until_ready_with_total_timeout(remaining.min(Duration::from_secs(3600)), |terminated| *terminated)
+            {
+                Ok(result) if result.is_ready() => return true,
+                Ok(_) => {}
+                Err(_) => return self.terminated.with_read(|terminated| *terminated),
             }
         }
     }
