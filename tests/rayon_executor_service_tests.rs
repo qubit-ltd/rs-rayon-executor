@@ -10,8 +10,6 @@
 mod common;
 
 use std::io;
-use std::panic::AssertUnwindSafe;
-use std::panic::catch_unwind;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::atomic::AtomicBool;
@@ -103,14 +101,12 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
 }
 
 #[test]
-fn test_rayon_executor_service_wait_termination_timeout_rejects_overflow() {
+fn test_rayon_executor_service_wait_termination_timeout_handles_max_duration() {
     let service = RayonExecutorService::new().expect("service should be created");
     service.shutdown();
     service.wait_termination();
 
-    let result = catch_unwind(AssertUnwindSafe(|| service.wait_termination_timeout(Duration::MAX)));
-
-    assert!(result.is_err());
+    assert!(service.wait_termination_timeout(Duration::MAX));
 }
 
 #[test]
