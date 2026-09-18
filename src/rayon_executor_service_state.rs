@@ -2,282 +2,213 @@
 //    Copyright (c) 2025 - 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
-//
-//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::collections::HashMap;
-use std::sync::atomic::AtomicU8;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use parking_lot::Condvar;
 use parking_lot::Mutex;
-use parking_lot::MutexGuard;
-use qubit_atomic::AtomicCount;
 use qubit_executor::service::ExecutorServiceLifecycle;
 use qubit_executor::service::StopReport;
-use qubit_lock::ParkingLotMonitor;
+use qubit_executor::service::SubmissionError;
 
-use crate::pending_cancel::PendingCancel;
+use crate::queued_job::QueuedJob;
 
-/// Shared state for [`crate::RayonExecutorService`].
+/// Result of claiming a task for cancellation.
+pub(crate) enum CancelDisposition {
+    /// The caller owns the queued job and must cancel it outside the lock.
+    Owned(Box<dyn QueuedJob>),
+    /// Another cancellation path already owns the job.
+    InProgress,
+    /// The job is running or has reached a terminal state.
+    Absent,
+}
+
+type OwnedQueuedJobs = Vec<(usize, Box<dyn QueuedJob>)>;
+
+struct Inner {
+    lifecycle: ExecutorServiceLifecycle,
+    task_capacity: usize,
+    num_threads: usize,
+    next_task_id: usize,
+    running: usize,
+    scheduled: usize,
+    queue: BTreeMap<usize, Box<dyn QueuedJob>>,
+    cancelling: BTreeSet<usize>,
+}
+
+/// Shared state for the Rayon executor service.
 pub(crate) struct RayonExecutorServiceState {
-    /// Stored lifecycle state before derived termination.
-    lifecycle: AtomicU8,
-    /// Number of accepted tasks that have not yet completed or been cancelled.
-    active_tasks: AtomicCount,
-    /// Serializes task submission and shutdown transitions.
-    submission_lock: Mutex<()>,
-    /// Cancellation hooks for tasks that have not started yet.
-    pending_tasks: Mutex<HashMap<usize, PendingCancel>>,
-    /// Monotonic identifier assigned to each accepted task.
-    next_task_id: AtomicUsize,
-    /// Published termination condition for blocking waiters.
-    terminated: ParkingLotMonitor<bool>,
+    inner: Mutex<Inner>,
+    terminated: Condvar,
+}
+
+/// A reserved task admission and the number of Rayon closures to dispatch.
+pub(crate) struct Admission {
+    /// Stable task identifier assigned to the accepted task.
+    pub(crate) task_id: usize,
+    /// Number of worker closures the caller must dispatch.
+    pub(crate) dispatch_count: usize,
 }
 
 impl RayonExecutorServiceState {
-    /// Creates fresh shared state for a Rayon-backed executor service.
-    ///
-    /// # Returns
-    ///
-    /// Shared service state with zero accepted tasks and running lifecycle.
-    pub(crate) fn new() -> Self {
-        Self {
-            lifecycle: AtomicU8::new(ExecutorServiceLifecycle::Running as u8),
-            active_tasks: AtomicCount::new(0),
-            submission_lock: Mutex::new(()),
-            pending_tasks: Mutex::new(HashMap::new()),
-            next_task_id: AtomicUsize::new(0),
-            terminated: ParkingLotMonitor::new(false),
+    /// Creates bounded executor state.
+    pub(crate) fn new(task_capacity: usize, num_threads: usize) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(Inner {
+                lifecycle: ExecutorServiceLifecycle::Running,
+                task_capacity,
+                num_threads,
+                next_task_id: 0,
+                running: 0,
+                scheduled: 0,
+                queue: BTreeMap::new(),
+                cancelling: BTreeSet::new(),
+            }),
+            terminated: Condvar::new(),
+        })
+    }
+
+    /// Accepts a queued job if lifecycle and capacity permit it.
+    pub(crate) fn admit(&self, job: Box<dyn QueuedJob>) -> Result<Admission, SubmissionError> {
+        let mut inner = self.inner.lock();
+        if inner.lifecycle != ExecutorServiceLifecycle::Running {
+            return Err(SubmissionError::Shutdown);
+        }
+        if occupied(&inner) >= inner.task_capacity {
+            return Err(SubmissionError::Saturated);
+        }
+        let task_id = inner.next_task_id;
+        inner.next_task_id = inner.next_task_id.checked_add(1).expect("task id exhausted");
+        job.accept();
+        inner.queue.insert(task_id, job);
+        let dispatch_count = inner.queue.len().min(inner.num_threads.saturating_sub(inner.scheduled));
+        inner.scheduled += dispatch_count;
+        debug_assert!(inner.scheduled <= inner.num_threads);
+        Ok(Admission {
+            task_id,
+            dispatch_count,
+        })
+    }
+
+    /// Takes one queued job for a scheduled Rayon closure.
+    pub(crate) fn take_next(&self) -> Option<Box<dyn QueuedJob>> {
+        let mut inner = self.inner.lock();
+        let Some((_, job)) = inner.queue.pop_first() else {
+            inner.scheduled = inner.scheduled.saturating_sub(1);
+            self.notify_if_terminated_locked(&inner);
+            return None;
+        };
+        inner.running += 1;
+        Some(job)
+    }
+
+    /// Finishes one running task and returns whether a successor closure is
+    /// needed.
+    pub(crate) fn finish_running(&self) -> bool {
+        let mut inner = self.inner.lock();
+        inner.running = inner.running.saturating_sub(1);
+        let dispatch = !inner.queue.is_empty();
+        if !dispatch {
+            inner.scheduled = inner.scheduled.saturating_sub(1);
+        }
+        self.notify_if_terminated_locked(&inner);
+        dispatch
+    }
+
+    /// Claims a pending task for cancellation.
+    pub(crate) fn cancel_pending_task(&self, task_id: usize) -> CancelDisposition {
+        let mut inner = self.inner.lock();
+        if let Some(job) = inner.queue.remove(&task_id) {
+            inner.cancelling.insert(task_id);
+            return CancelDisposition::Owned(job);
+        }
+        if inner.cancelling.contains(&task_id) {
+            CancelDisposition::InProgress
+        } else {
+            CancelDisposition::Absent
         }
     }
 
-    /// Acquires the submission lock while tolerating poisoned locks.
-    ///
-    /// # Returns
-    ///
-    /// A guard for the submission lock.
-    pub(crate) fn lock_submission(&self) -> MutexGuard<'_, ()> {
-        self.submission_lock.lock()
+    /// Completes an out-of-lock cancellation operation.
+    pub(crate) fn finish_cancelling(&self, task_id: usize) {
+        let mut inner = self.inner.lock();
+        inner.cancelling.remove(&task_id);
+        self.notify_if_terminated_locked(&inner);
+        self.terminated.notify_all();
     }
 
-    /// Returns the submission lock used for admission control.
-    #[inline]
-    pub(crate) fn submission_lock(&self) -> &Mutex<()> {
-        &self.submission_lock
+    /// Changes the lifecycle to graceful shutdown.
+    pub(crate) fn shutdown(&self) {
+        let mut inner = self.inner.lock();
+        if inner.lifecycle == ExecutorServiceLifecycle::Running {
+            inner.lifecycle = ExecutorServiceLifecycle::ShuttingDown;
+        }
+        self.notify_if_terminated_locked(&inner);
     }
 
-    /// Acquires the pending-task map while tolerating poisoned locks.
-    ///
-    /// # Returns
-    ///
-    /// A guard for the pending-task cancellation map.
-    fn lock_pending_tasks(&self) -> MutexGuard<'_, HashMap<usize, PendingCancel>> {
-        self.pending_tasks.lock()
+    /// Stops admission and takes all still queued jobs for cancellation.
+    pub(crate) fn stop(&self) -> (StopReport, OwnedQueuedJobs) {
+        let mut inner = self.inner.lock();
+        inner.lifecycle = ExecutorServiceLifecycle::Stopping;
+        let queued = inner.queue.len();
+        let running = inner.running;
+        let jobs = std::mem::take(&mut inner.queue);
+        let mut owned = Vec::with_capacity(jobs.len());
+        for (task_id, job) in jobs {
+            inner.cancelling.insert(task_id);
+            owned.push((task_id, job));
+        }
+        (StopReport::new(queued, running, owned.len()), owned)
     }
 
-    /// Returns the stored lifecycle state.
-    fn stored_lifecycle(&self) -> ExecutorServiceLifecycle {
-        lifecycle_from_u8(self.lifecycle.load(Ordering::Acquire))
-    }
-
-    /// Returns the observed lifecycle state.
+    /// Returns the current lifecycle, deriving termination from task counters.
     pub(crate) fn lifecycle(&self) -> ExecutorServiceLifecycle {
-        let lifecycle = self.stored_lifecycle();
-        if lifecycle != ExecutorServiceLifecycle::Running && self.has_no_active_tasks() {
+        let inner = self.inner.lock();
+        if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
             ExecutorServiceLifecycle::Terminated
         } else {
-            lifecycle
+            inner.lifecycle
         }
     }
 
-    /// Returns whether shutdown or stop has been requested.
+    /// Returns whether new submissions are rejected.
     pub(crate) fn is_not_running(&self) -> bool {
-        self.stored_lifecycle() != ExecutorServiceLifecycle::Running
+        self.inner.lock().lifecycle != ExecutorServiceLifecycle::Running
     }
 
-    /// Marks the service as shutting down.
-    pub(crate) fn shutdown(&self) {
-        let _ = self
-            .lifecycle
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (lifecycle_from_u8(current) == ExecutorServiceLifecycle::Running)
-                    .then_some(ExecutorServiceLifecycle::ShuttingDown as u8)
-            });
-    }
-
-    /// Marks the service as stopping.
-    pub(crate) fn stop(&self) {
-        self.lifecycle
-            .store(ExecutorServiceLifecycle::Stopping as u8, Ordering::Release);
-    }
-
-    /// Returns whether no accepted task remains active.
-    pub(crate) fn has_no_active_tasks(&self) -> bool {
-        self.active_tasks.is_zero()
-    }
-
-    /// Allocates the next stable task identifier.
-    ///
-    /// # Returns
-    ///
-    /// A unique task identifier within this service instance.
-    pub(crate) fn next_task_id(&self) -> usize {
-        self.next_task_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// Records one accepted task.
-    pub(crate) fn on_task_accepted(&self) {
-        self.active_tasks.inc();
-    }
-
-    /// Registers a pending task cancellation hook.
-    ///
-    /// # Parameters
-    ///
-    /// * `task_id` - Stable identifier of the accepted task.
-    /// * `cancel` - Callback used to cancel the task before it starts.
-    pub(crate) fn register_pending_task(&self, task_id: usize, cancel: PendingCancel) {
-        self.lock_pending_tasks().insert(task_id, cancel);
-    }
-
-    /// Claims a pending task for execution if cancellation has not won first.
-    ///
-    /// # Parameters
-    ///
-    /// * `task_id` - Stable identifier of the task to claim.
-    /// * `claim` - Callback that decides whether the pending task can be
-    ///   claimed before it is removed from the pending-task map.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the task was still pending and was claimed for execution, or
-    /// `false` if it had already been cancelled or stopped.
-    pub(crate) fn start_pending_task<F>(&self, task_id: usize, claim: F) -> bool
-    where
-        F: FnOnce() -> bool,
-    {
-        let mut pending_tasks = self.lock_pending_tasks();
-        if !pending_tasks.contains_key(&task_id) {
-            return false;
-        }
-        if !claim() {
-            return false;
-        }
-        pending_tasks.remove(&task_id);
-        true
-    }
-
-    /// Cancels a pending task if no Rayon worker has started it yet.
-    ///
-    /// # Parameters
-    ///
-    /// * `task_id` - Stable identifier of the task to cancel.
-    /// * `cancel` - Callback that publishes cancellation to the task handle.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the pending task was cancelled by this call, or `false` if it
-    /// had already started, completed, or been cancelled by `stop`.
-    pub(crate) fn cancel_pending_task(&self, task_id: usize, cancel: &PendingCancel) -> bool {
-        let should_notify = {
-            let mut pending_tasks = self.lock_pending_tasks();
-            if !pending_tasks.contains_key(&task_id) {
-                return false;
-            }
-            if !cancel() {
-                return false;
-            }
-            pending_tasks.remove(&task_id);
-            self.active_tasks.dec() == 0
-        };
-        if should_notify {
-            self.notify_if_terminated();
-        }
-        true
-    }
-
-    /// Cancels pending tasks and captures a consistent stop report.
-    ///
-    /// The pending-task lock serializes cancellation with task start and manual
-    /// cancellation. This keeps the pending-task map and active counter in sync
-    /// for concurrent `stop` calls.
-    ///
-    /// # Returns
-    ///
-    /// A report containing the queued and running task counts observed before
-    /// cancellation, plus the number of pending tasks cancelled by this call.
-    pub(crate) fn cancel_pending_tasks_for_stop(&self) -> StopReport {
-        let (report, should_notify) = {
-            let mut pending_tasks = self.lock_pending_tasks();
-            let queued = pending_tasks.len();
-            let running = self.active_tasks.get().saturating_sub(queued);
-
-            let mut cancelled = 0usize;
-            for (_, cancel) in pending_tasks.drain() {
-                let was_cancelled = cancel();
-                debug_assert!(was_cancelled, "drained pending rayon task should cancel before start",);
-                if was_cancelled {
-                    self.active_tasks.dec();
-                    cancelled += 1;
-                }
-            }
-
-            (StopReport::new(queued, running, cancelled), self.has_no_active_tasks())
-        };
-
-        if should_notify {
-            self.notify_if_terminated();
-        }
-        report
-    }
-
-    /// Updates counters after a started task completes.
-    pub(crate) fn on_task_completed(&self) {
-        if self.active_tasks.dec() == 0 {
-            self.notify_if_terminated();
-        }
-    }
-
-    /// Blocks until shutdown or stop has completed and no tasks remain active.
+    /// Waits until lifecycle termination.
     pub(crate) fn wait_for_termination(&self) {
-        self.terminated.wait_until_ready(|terminated| *terminated);
+        let mut guard = self.inner.lock();
+        while guard.lifecycle == ExecutorServiceLifecycle::Running || occupied(&guard) != 0 {
+            self.terminated.wait(&mut guard);
+        }
     }
 
-    /// Waits until termination or the total timeout expires.
+    /// Waits up to the supplied duration for lifecycle termination.
     pub(crate) fn wait_for_termination_timeout(&self, timeout: Duration) -> bool {
         let started = Instant::now();
-        loop {
+        let mut guard = self.inner.lock();
+        while guard.lifecycle == ExecutorServiceLifecycle::Running || occupied(&guard) != 0 {
             let remaining = timeout.saturating_sub(started.elapsed());
             if remaining.is_zero() {
-                return self.terminated.with_read(|terminated| *terminated);
+                return false;
             }
-            match self
-                .terminated
-                .wait_until_ready_with_total_timeout(remaining.min(Duration::from_secs(3600)), |terminated| *terminated)
-            {
-                Ok(result) if result.is_ready() => return true,
-                Ok(_) => {}
-                Err(_) => return self.terminated.with_read(|terminated| *terminated),
-            }
+            self.terminated.wait_for(&mut guard, remaining);
         }
+        true
     }
 
-    /// Publishes termination and wakes waiters when no task remains active.
-    pub(crate) fn notify_if_terminated(&self) {
-        if self.is_not_running() && self.has_no_active_tasks() {
-            self.terminated.with_write_notify_all(|terminated| *terminated = true);
+    fn notify_if_terminated_locked(&self, inner: &Inner) {
+        if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(inner) == 0 {
+            self.terminated.notify_all();
         }
     }
 }
 
-fn lifecycle_from_u8(value: u8) -> ExecutorServiceLifecycle {
-    match value {
-        0 => ExecutorServiceLifecycle::Running,
-        1 => ExecutorServiceLifecycle::ShuttingDown,
-        2 => ExecutorServiceLifecycle::Stopping,
-        _ => ExecutorServiceLifecycle::Terminated,
-    }
+fn occupied(inner: &Inner) -> usize {
+    inner.queue.len() + inner.running + inner.cancelling.len()
 }

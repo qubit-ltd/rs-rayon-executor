@@ -214,7 +214,11 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
 fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
     const QUEUED_TASKS: usize = 8_192;
 
-    let service = create_single_worker_service();
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .task_capacity(QUEUED_TASKS + 1)
+        .build()
+        .expect("service should be created");
     let (running, release_tx) = submit_blocking_task(&service);
     let queued_handles = (0..QUEUED_TASKS)
         .map(|_| {

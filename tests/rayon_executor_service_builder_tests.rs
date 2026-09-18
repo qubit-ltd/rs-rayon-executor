@@ -25,6 +25,12 @@ fn test_rayon_executor_service_builder_validates_configuration() {
 
     let zero_stack = RayonExecutorService::builder().num_threads(1).stack_size(0).build();
     assert!(matches!(zero_stack, Err(RayonExecutorServiceBuildError::ZeroStackSize),));
+
+    let zero_capacity = RayonExecutorService::builder().task_capacity(0).build();
+    assert!(matches!(
+        zero_capacity,
+        Err(RayonExecutorServiceBuildError::ZeroTaskCapacity),
+    ));
 }
 
 #[test]

@@ -6,6 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 use std::future::IntoFuture;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 use std::sync::Arc;
 
 use qubit_executor::CancelResult;
@@ -17,7 +19,7 @@ use qubit_executor::task::TaskHandleFuture;
 use qubit_executor::task::spi::TaskResultHandle;
 use qubit_executor::task::spi::TrackedTaskHandle;
 
-use crate::pending_cancel::PendingCancel;
+use crate::rayon_executor_service_state::CancelDisposition;
 use crate::rayon_executor_service_state::RayonExecutorServiceState;
 
 /// Tracked handle returned by [`crate::RayonExecutorService`] for accepted
@@ -33,8 +35,6 @@ pub struct RayonTaskHandle<R, E> {
     task_id: usize,
     /// Shared service state used to keep cancellation counters consistent.
     state: Arc<RayonExecutorServiceState>,
-    /// Cancellation hook that wins only before task start.
-    cancel: PendingCancel,
 }
 
 impl<R, E> RayonTaskHandle<R, E> {
@@ -45,23 +45,12 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// * `inner` - Tracked task used for result and status observation.
     /// * `task_id` - Stable identifier assigned to the accepted task.
     /// * `state` - Shared service state that owns lifecycle counters.
-    /// * `cancel` - Cancellation hook that may cancel the task before start.
     ///
     /// # Returns
     ///
     /// A tracked handle for the accepted Rayon task.
-    pub(crate) fn new(
-        inner: TrackedTask<R, E>,
-        task_id: usize,
-        state: Arc<RayonExecutorServiceState>,
-        cancel: PendingCancel,
-    ) -> Self {
-        Self {
-            inner,
-            task_id,
-            state,
-            cancel,
-        }
+    pub(crate) fn new(inner: TrackedTask<R, E>, task_id: usize, state: Arc<RayonExecutorServiceState>) -> Self {
+        Self { inner, task_id, state }
     }
 
     /// Waits for the task to finish and returns its final result.
@@ -151,20 +140,10 @@ where
     /// Attempts to retrieve the inner tracked task result without blocking.
     #[inline]
     fn try_get(self) -> TryGet<Self, R, E> {
-        let Self {
-            inner,
-            task_id,
-            state,
-            cancel,
-        } = self;
+        let Self { inner, task_id, state } = self;
         match inner.try_get() {
             TryGet::Ready(result) => TryGet::Ready(result),
-            TryGet::Pending(inner) => TryGet::Pending(Self {
-                inner,
-                task_id,
-                state,
-                cancel,
-            }),
+            TryGet::Pending(inner) => TryGet::Pending(Self { inner, task_id, state }),
         }
     }
 }
@@ -183,12 +162,17 @@ where
     /// Cancels the task through the owning service state.
     #[inline]
     fn cancel(&self) -> CancelResult {
-        if self.state.cancel_pending_task(self.task_id, &self.cancel) {
-            return CancelResult::Cancelled;
-        }
-        match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
-            _ => CancelResult::AlreadyFinished,
+        match self.state.cancel_pending_task(self.task_id) {
+            CancelDisposition::Owned(job) => {
+                let _ = catch_unwind(AssertUnwindSafe(|| job.cancel()));
+                self.state.finish_cancelling(self.task_id);
+                CancelResult::Cancelled
+            }
+            CancelDisposition::InProgress => CancelResult::Cancelled,
+            CancelDisposition::Absent => match self.status() {
+                TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
+                _ => CancelResult::AlreadyFinished,
+            },
         }
     }
 }
