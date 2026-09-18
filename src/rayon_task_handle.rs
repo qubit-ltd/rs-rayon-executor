@@ -19,7 +19,7 @@ use qubit_executor::task::TaskHandleFuture;
 use qubit_executor::task::spi::TaskResultHandle;
 use qubit_executor::task::spi::TrackedTaskHandle;
 
-use crate::rayon_executor_service_state::CancelDisposition;
+use crate::internal::CancelDisposition;
 use crate::rayon_executor_service_state::RayonExecutorServiceState;
 
 /// Tracked handle returned by [`crate::RayonExecutorService`] for accepted
@@ -28,6 +28,23 @@ use crate::rayon_executor_service_state::RayonExecutorServiceState;
 /// This handle supports blocking [`Self::get`], asynchronous `.await`, status
 /// inspection, and best-effort cancellation before a Rayon worker starts the
 /// task.
+///
+/// # Type Parameters
+///
+/// * `R` - Successful value produced by the submitted callable.
+/// * `E` - User error produced by the submitted callable.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_executor::service::ExecutorService;
+/// use qubit_rayon_executor::RayonExecutorService;
+///
+/// let service = RayonExecutorService::builder().num_threads(1).build()?;
+/// let handle = service.submit_tracked_callable(|| Ok::<_, std::io::Error>(42))?;
+/// assert_eq!(handle.get()?, 42);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct RayonTaskHandle<R, E> {
     /// Shared task result and status observed through blocking and async APIs.
     inner: TrackedTask<R, E>,
@@ -38,7 +55,7 @@ pub struct RayonTaskHandle<R, E> {
 }
 
 impl<R, E> RayonTaskHandle<R, E> {
-    /// Creates a Rayon task handle from a tracked task and cancel hook.
+    /// Creates a Rayon task handle from a tracked task and cancellation state.
     ///
     /// # Parameters
     ///
@@ -53,11 +70,16 @@ impl<R, E> RayonTaskHandle<R, E> {
         Self { inner, task_id, state }
     }
 
-    /// Waits for the task to finish and returns its final result.
+    /// Blocks until the task finishes and returns its final result.
     ///
     /// # Returns
     ///
     /// The final task result reported through the underlying tracked task.
+    ///
+    /// # Errors
+    ///
+    /// The returned [`TaskResult`] reports user failure, task cancellation, or
+    /// a user-task panic through its task-execution error variant.
     #[inline]
     pub fn get(self) -> TaskResult<R, E>
     where
@@ -71,7 +93,8 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// # Returns
     ///
-    /// A ready result or the pending Rayon task handle.
+    /// `TryGet::Ready` with the final task result, or `TryGet::Pending` with
+    /// this handle when the task has not reached a terminal state.
     #[inline]
     pub fn try_get(self) -> TryGet<Self, R, E>
     where
@@ -85,7 +108,8 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// # Returns
     ///
-    /// The observed cancellation outcome.
+    /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a
+    /// worker claims it, or `AlreadyFinished` after a terminal result exists.
     #[inline]
     pub fn cancel(&self) -> CancelResult
     where
@@ -100,6 +124,7 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// # Returns
     ///
     /// `true` after the task has finished or has been cancelled.
+    #[must_use]
     #[inline]
     pub fn is_done(&self) -> bool
     where
@@ -114,6 +139,7 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// # Returns
     ///
     /// The task's pending, running, or terminal status.
+    #[must_use]
     #[inline]
     pub fn status(&self) -> TaskStatus {
         self.inner.status()
