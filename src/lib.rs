@@ -9,7 +9,7 @@
 //!
 //! Rayon-backed CPU-bound executor service implementation.
 
-mod pending_cancel;
+mod queued_job;
 mod rayon_executor_service;
 mod rayon_executor_service_build_error;
 mod rayon_executor_service_builder;

@@ -5,10 +5,8 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-use std::sync::Arc;
 use std::thread;
 
-use qubit_dcl::DclExecutor;
 use rayon::ThreadPoolBuilder as RayonThreadPoolBuilder;
 
 use crate::rayon_executor_service::RayonExecutorService;
@@ -30,8 +28,8 @@ pub struct RayonExecutorServiceBuilder {
     thread_name_prefix: String,
     /// Optional worker stack size in bytes.
     stack_size: Option<usize>,
-
-    admission_executor: Option<DclExecutor>,
+    /// Maximum number of accepted tasks that have not reached a terminal state.
+    task_capacity: usize,
 }
 
 impl RayonExecutorServiceBuilder {
@@ -80,6 +78,12 @@ impl RayonExecutorServiceBuilder {
         self
     }
 
+    /// Sets the maximum number of accepted unfinished tasks.
+    pub fn task_capacity(mut self, task_capacity: usize) -> Self {
+        self.task_capacity = task_capacity;
+        self
+    }
+
     /// Builds the configured Rayon executor service.
     ///
     /// # Returns
@@ -98,6 +102,9 @@ impl RayonExecutorServiceBuilder {
         if self.stack_size == Some(0) {
             return Err(RayonExecutorServiceBuildError::ZeroStackSize);
         }
+        if self.task_capacity == 0 {
+            return Err(RayonExecutorServiceBuildError::ZeroTaskCapacity);
+        }
         let prefix = self.thread_name_prefix;
         let mut builder = RayonThreadPoolBuilder::new()
             .num_threads(self.num_threads)
@@ -105,17 +112,9 @@ impl RayonExecutorServiceBuilder {
         if let Some(stack_size) = self.stack_size {
             builder = builder.stack_size(stack_size);
         }
-        let pool = Arc::new(builder.build()?);
-        let state = Arc::new(RayonExecutorServiceState::new());
-        let admission_executor = self.admission_executor.unwrap_or_else(|| {
-            let state_for_predicate = Arc::clone(&state);
-            DclExecutor::new(move || !state_for_predicate.is_not_running())
-        });
-        Ok(RayonExecutorService {
-            pool,
-            state,
-            admission_executor,
-        })
+        let pool = std::sync::Arc::new(builder.build()?);
+        let state = RayonExecutorServiceState::new(self.task_capacity, self.num_threads);
+        Ok(RayonExecutorService { pool, state })
     }
 }
 
@@ -130,7 +129,7 @@ impl Default for RayonExecutorServiceBuilder {
             num_threads: default_rayon_thread_count(),
             thread_name_prefix: DEFAULT_THREAD_NAME_PREFIX.to_owned(),
             stack_size: None,
-            admission_executor: None,
+            task_capacity: 1024,
         }
     }
 }

@@ -19,6 +19,10 @@ pub enum RayonExecutorServiceBuildError {
     #[error("rayon executor service stack size must be greater than zero")]
     ZeroStackSize,
 
+    /// The configured accepted-task capacity is zero.
+    #[error("rayon executor service task capacity must be greater than zero")]
+    ZeroTaskCapacity,
+
     /// Rayon rejected the underlying thread-pool configuration.
     #[error("failed to build rayon executor service: {source}")]
     BuildFailed {
