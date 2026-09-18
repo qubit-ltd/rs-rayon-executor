@@ -19,7 +19,7 @@ source tree or workspace. Submission methods require the executor trait:
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { path = "../rs-rayon-executor" }
+qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
 ```
 
 Rust 1.94 or later is required.
