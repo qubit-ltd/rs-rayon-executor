@@ -18,9 +18,9 @@ Qubit Rayon Executor 将专用 Rayon thread pool 适配到 Qubit `ExecutorServic
 ## 功能
 
 - 提供 `RayonExecutorService`，用于托管 CPU 密集型任务执行。
-- 提供 `RayonExecutorServiceBuilder`，用于配置 worker 数量、线程名前缀与栈大小。
+- 提供 `RayonExecutorServiceBuilder`，用于配置 worker 数量、任务容量、线程名前缀与栈大小。
 - 提供 `TaskHandle` 用于 callable 结果，提供 `RayonTaskHandle` 用于 tracked 状态与取消。
-- 提供 `RayonExecutorServiceBuildError`，表示线程数为零、栈大小为零或 Rayon 构建失败。
+- 提供 `RayonExecutorServiceBuildError`，表示线程数为零、栈大小为零、任务容量为零或 Rayon 构建失败。
 - 再导出共享的 `ExecutorService`、`SubmissionError` 与 `StopReport`，便于使用方导入。
 - 生命周期行为与其它 Qubit executor service 对齐。
 
@@ -34,7 +34,7 @@ Rayon 针对 CPU 密集型并行工作优化。当负载主要消耗 CPU，并�
 
 `submit` 成功只表示服务接受了一个 fire-and-forget runnable。需要结果时使用 `submit_callable` 获取只包含结果的 `TaskHandle`；需要状态和取消时，使用 `submit_tracked` 或 `submit_tracked_callable` 获取 `RayonTaskHandle`。
 
-队列中的任务在 Rayon 开始运行前可以被取消。`shutdown` 停止接受新任务，并允许已接受工作完成。`stop` 停止接受新任务，并取消尚未开始的工作；已经运行的 CPU 工作不会被强制停止。被取消的 callable 与 tracked handle 会报告 `TaskExecutionError::Cancelled`。
+服务对已接受但未结束的任务设有上限，默认是 1024。容量满时立即返回 `SubmissionError::Saturated`；关闭后优先返回 `Shutdown`。队列中的任务在 Rayon 开始运行前可以被取消，取消会在返回前从队列移除任务并释放其捕获物。`shutdown` 允许已接受工作完成；`stop` 取消尚未开始的工作，已经运行的 CPU 工作不会被强制停止。终止等待只等待已接受任务进入终态，不等待 Rayon worker 线程退出。任务在同一个 pool 中同步等待另一个任务可能死锁，应使用 Rayon `join`/`scope` 或异步协调。
 
 ## 快速开始
 
@@ -46,6 +46,7 @@ use qubit_rayon_executor::{ExecutorService, RayonExecutorService};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = RayonExecutorService::builder()
         .num_threads(4)
+        .task_capacity(1024)
         .thread_name_prefix("cpu-worker")
         .build()?;
 

@@ -21,9 +21,9 @@ libraries can depend only on the execution model they need.
 ## Features
 
 - `RayonExecutorService` for managed CPU-bound task execution.
-- `RayonExecutorServiceBuilder` for configuring worker count, thread-name prefix, and stack size.
+- `RayonExecutorServiceBuilder` for configuring worker count, task capacity, thread-name prefix, and stack size.
 - `TaskHandle` for callable results and `RayonTaskHandle` for tracked status and cancellation.
-- `RayonExecutorServiceBuildError` for zero thread count, zero stack size, and Rayon build failures.
+- `RayonExecutorServiceBuildError` for zero thread count, zero stack size, zero task capacity, and Rayon build failures.
 - Shared `ExecutorService`, `SubmissionError`, and `StopReport` re-exports for convenient imports.
 - Lifecycle behavior aligned with other Qubit executor services.
 
@@ -45,11 +45,15 @@ Use `submit_callable` for a result-only `TaskHandle`, or
 `submit_tracked` / `submit_tracked_callable` when you need a `RayonTaskHandle`
 with status and cancellation.
 
-Queued tasks can be cancelled before Rayon starts running them. `shutdown` stops
-accepting new tasks and allows accepted work to finish. `stop` stops
-accepting new tasks and cancels work that has not started yet; already running
-CPU work is not forcibly stopped. Cancelled callable and tracked handles report
-`TaskExecutionError::Cancelled`.
+The service has a bounded accepted-task capacity (1024 by default). A full
+service returns `SubmissionError::Saturated`; after shutdown, `Shutdown` takes
+precedence. Queued tasks can be cancelled before Rayon starts running them.
+Cancellation removes the queued callable and releases its captures before the
+cancel call returns. `shutdown` allows accepted work to finish. `stop` cancels
+work that has not started; already running CPU work is not forcibly stopped.
+Termination waits for accepted task results, not for Rayon worker threads to
+exit. A task that synchronously waits for another task from the same pool can
+deadlock; use Rayon `join`/`scope` or asynchronous coordination instead.
 
 ## Quick Start
 
@@ -61,6 +65,7 @@ use qubit_rayon_executor::{ExecutorService, RayonExecutorService};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = RayonExecutorService::builder()
         .num_threads(4)
+        .task_capacity(1024)
         .thread_name_prefix("cpu-worker")
         .build()?;
 
