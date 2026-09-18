@@ -16,10 +16,21 @@ use crate::rayon_executor_service_state::RayonExecutorServiceState;
 /// Default thread name prefix used by [`RayonExecutorServiceBuilder`].
 const DEFAULT_THREAD_NAME_PREFIX: &str = "qubit-rayon-executor";
 
-/// Builder for [`RayonExecutorService`].
+/// Builder for a bounded [`RayonExecutorService`].
 ///
 /// The default builder uses the available CPU parallelism and names workers
 /// with the `qubit-rayon-executor` prefix.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_executor::service::ExecutorService;
+/// use qubit_rayon_executor::RayonExecutorServiceBuilder;
+///
+/// let service = RayonExecutorServiceBuilder::default().num_threads(1).build()?;
+/// assert!(!service.is_terminated());
+/// # Ok::<(), qubit_rayon_executor::RayonExecutorServiceBuildError>(())
+/// ```
 #[derive(Clone)]
 pub struct RayonExecutorServiceBuilder {
     /// Number of Rayon worker threads to create.
@@ -79,6 +90,15 @@ impl RayonExecutorServiceBuilder {
     }
 
     /// Sets the maximum number of accepted unfinished tasks.
+    ///
+    /// # Parameters
+    ///
+    /// * `task_capacity` - Maximum queued, running, or cancelling tasks.
+    ///
+    /// # Returns
+    ///
+    /// This builder for fluent configuration.
+    #[inline]
     pub fn task_capacity(mut self, task_capacity: usize) -> Self {
         self.task_capacity = task_capacity;
         self
@@ -94,7 +114,8 @@ impl RayonExecutorServiceBuilder {
     /// # Errors
     ///
     /// Returns [`RayonExecutorServiceBuildError`] if the thread count or stack
-    /// size is zero, or if Rayon rejects the thread-pool configuration.
+    /// size or task capacity is zero, or if Rayon rejects the thread-pool
+    /// configuration.
     pub fn build(self) -> Result<RayonExecutorService, RayonExecutorServiceBuildError> {
         if self.num_threads == 0 {
             return Err(RayonExecutorServiceBuildError::ZeroThreadCount);
@@ -123,7 +144,8 @@ impl Default for RayonExecutorServiceBuilder {
     ///
     /// # Returns
     ///
-    /// A builder configured for the detected CPU parallelism.
+    /// A builder configured for detected CPU parallelism, a capacity of 1024,
+    /// and the default thread-name prefix.
     fn default() -> Self {
         Self {
             num_threads: default_rayon_thread_count(),
