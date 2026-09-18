@@ -7,60 +7,32 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![中文文档](https://img.shields.io/badge/文档-中文版-blue.svg)](README.zh_CN.md)
 
-Rayon-backed CPU executor service for Rust.
+Qubit Rayon Executor gives Rust libraries a bounded, dedicated Rayon pool for
+CPU-bound synchronous work. It lets callers submit work through the Qubit
+executor contract without making a general blocking queue compete for CPU.
 
-## Overview
+## Installation
 
-Qubit Rayon Executor adapts a dedicated Rayon thread pool to the Qubit
-`ExecutorService` contract. It is intended for CPU-bound work where Rayon worker
-scheduling is more appropriate than a general-purpose blocking queue.
+The package is configured with `publish = false`; consume it from the Qubit
+source tree or workspace. Submission methods require the executor trait:
 
-The crate is separate from `qubit-thread-pool` and `qubit-tokio-executor` so
-libraries can depend only on the execution model they need.
+```toml
+[dependencies]
+qubit-executor = "0.8"
+qubit-rayon-executor = { path = "../rs-rayon-executor" }
+```
 
-## Features
-
-- `RayonExecutorService` for managed CPU-bound task execution.
-- `RayonExecutorServiceBuilder` for configuring worker count, task capacity, thread-name prefix, and stack size.
-- `TaskHandle` for callable results and `RayonTaskHandle` for tracked status and cancellation.
-- `RayonExecutorServiceBuildError` for zero thread count, zero stack size, zero task capacity, and Rayon build failures.
-- Shared `ExecutorService`, `SubmissionError`, and `StopReport` re-exports for convenient imports.
-- Lifecycle behavior aligned with other Qubit executor services.
-
-## CPU-Bound Workloads
-
-Rayon is optimized for CPU-bound parallel work. Use this crate when the workload
-primarily consumes CPU and should run on a dedicated Rayon pool. Avoid using it
-for long blocking IO operations, because blocking Rayon workers can reduce CPU
-parallelism for unrelated tasks.
-
-If your task is synchronous and may block on IO, prefer `qubit-thread-pool`. If
-your task is an async future or must integrate with Tokio, prefer
-`qubit-tokio-executor`.
-
-## Shutdown and Cancellation
-
-A successful `submit` means the service accepted a fire-and-forget runnable.
-Use `submit_callable` for a result-only `TaskHandle`, or
-`submit_tracked` / `submit_tracked_callable` when you need a `RayonTaskHandle`
-with status and cancellation.
-
-The service has a bounded accepted-task capacity (1024 by default). A full
-service returns `SubmissionError::Saturated`; after shutdown, `Shutdown` takes
-precedence. Queued tasks can be cancelled before Rayon starts running them.
-Cancellation removes the queued callable and releases its captures before the
-cancel call returns. `shutdown` allows accepted work to finish. `stop` cancels
-work that has not started; already running CPU work is not forcibly stopped.
-Termination waits for accepted task results, not for Rayon worker threads to
-exit. A task that synchronously waits for another task from the same pool can
-deadlock; use Rayon `join`/`scope` or asynchronous coordination instead.
+Rust 1.94 or later is required.
 
 ## Quick Start
+
+For example, isolate a CPU aggregation in its own Rayon pool:
 
 ```rust
 use std::io;
 
-use qubit_rayon_executor::{ExecutorService, RayonExecutorService};
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::RayonExecutorService;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = RayonExecutorService::builder()
@@ -68,61 +40,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .task_capacity(1024)
         .thread_name_prefix("cpu-worker")
         .build()?;
-
     let handle = service.submit_callable(|| Ok::<usize, io::Error>((1..=10).sum()))?;
     assert_eq!(handle.get()?, 55);
     service.shutdown();
+    service.wait_termination();
     Ok(())
 }
 ```
 
-## Choosing an Executor
+## Why This Project Exists
 
-Use `RayonExecutorService` for CPU-heavy computations that should be isolated in
-a Rayon pool. Use `qubit-thread-pool` for general blocking OS-thread work. Use
-`qubit-tokio-executor` for Tokio blocking tasks and async IO futures.
+CPU-heavy work benefits from Rayon scheduling, while long blocking IO can occupy
+workers needed by other computation. This crate isolates CPU work and bounds
+accepted unfinished tasks, making overload observable rather than unbounded.
 
-For application-level wiring across blocking, CPU-bound, Tokio blocking, and
-async IO domains, use `qubit-execution-services`.
+Use `qubit-thread-pool` for synchronous work that may block on IO, and
+`qubit-tokio-executor` for Tokio blocking tasks or async IO futures.
+
+## What It Provides
+
+- `RayonExecutorService` and its builder for a configurable Rayon pool.
+- Detached, result-only, and tracked submissions; tracked handles expose status
+  and best-effort cancellation before a worker starts the task.
+- A default accepted-task capacity of 1024 and `SubmissionError::Saturated` at
+  capacity.
+- `shutdown` to finish accepted work, and `stop` to cancel queued work; neither
+  forcibly stops CPU work that has already started.
+- `RayonExecutorServiceBuildError` for invalid thread, stack-size, and capacity
+  settings, and Rayon pool-construction failures.
+
+It is not an async runtime or a replacement for Rayon `join` and `scope`. Do
+not synchronously wait for another task from the same saturated pool.
+
+## Learn More
+
+Read the [English user guide](doc/user_guide.md) or
+[中文用户手册](doc/user_guide.zh_CN.md) for lifecycle and cancellation details;
+see the [API documentation](https://docs.rs/qubit-rayon-executor) or the
+[中文 README](README.zh_CN.md) for more.
 
 ## Testing
 
-A minimal local run:
-
 ```bash
+# Run tests with the default feature set
 cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+
+# Run tests with all declared features
+cargo test --all-features
+
+# Project CI checks
+./ci-check.sh
+
+# Check code coverage
+./coverage.sh
 ```
-
-To mirror what continuous integration enforces, run the repository scripts from
-the project root: `./align-ci.sh` brings local tooling and configuration in line
-with CI, then `./ci-check.sh` runs the same checks the pipeline uses. For test
-coverage, use `./coverage.sh` to generate or open reports.
-
-## Contributing
-
-Issues and pull requests are welcome.
-
-- Open an issue for bug reports, design questions, or larger feature proposals when it helps align on direction.
-- Keep pull requests scoped to one behavior change, fix, or documentation update when practical.
-- Before submitting, run `./align-ci.sh` and then `./ci-check.sh` so your branch matches CI rules and passes the same checks as the pipeline.
-- Add or update tests when you change runtime behavior, and update this README or public rustdoc when user-visible API behavior changes.
-- If you change cancellation or shutdown behavior, include tests for queued and already-running tasks where practical.
-
-By contributing, you agree to license your contributions under the [Apache License, Version 2.0](LICENSE), the same license as this project.
 
 ## License
 
-Copyright (c) 2026. Haixing Hu.
+Copyright (c) 2025 - 2026. Haixing Hu. All rights reserved.
 
-This project is licensed under the [Apache License, Version 2.0](LICENSE). See the `LICENSE` file in the repository for the full text.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the
+full license text.
+
+## Contributing
+
+Contributions are welcome. Please follow the Rust API guidelines, keep public
+API documentation and tests current, and run `./align-ci.sh` to format code and
+`./ci-check.sh` to satisfy CI requirements before submitting a pull request.
 
 ## Author
 
-**Haixing Hu** — Qubit Co. Ltd.
+**Haixing Hu** - *Qubit Co. Ltd.*
 
-| | |
-| --- | --- |
-| **Repository** | [github.com/qubit-ltd/rs-rayon-executor](https://github.com/qubit-ltd/rs-rayon-executor) |
-| **Documentation** | [docs.rs/qubit-rayon-executor](https://docs.rs/qubit-rayon-executor) |
-| **Crate** | [crates.io/crates/qubit-rayon-executor](https://crates.io/crates/qubit-rayon-executor) |
+Repository: [https://github.com/qubit-ltd/rs-rayon-executor](https://github.com/qubit-ltd/rs-rayon-executor)
