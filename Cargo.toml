@@ -32,13 +32,13 @@ name = "qubit_rayon_executor"
 doctest = true
 
 [dependencies]
-rayon = "1.12"
-thiserror = "2.0"
+rayon = "^1.12"
+thiserror = "^2.0"
 
-parking_lot = "0.12"
+parking_lot = "^0.12"
 qubit-dcl = "0.13"
 qubit-atomic = "0.17"
-qubit-executor = { path = "../rs-executor" }
+qubit-executor = { path = "../rs-executor", version = "0.8" }
 qubit-function = "0.18"
 qubit-lock = { default-features = false, features = ["monitor", "parking-lot"], version = "0.14" }
 
