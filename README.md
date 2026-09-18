@@ -13,13 +13,12 @@ executor contract without making a general blocking queue compete for CPU.
 
 ## Installation
 
-The package is configured with `publish = false`; consume it from the Qubit
-source tree or workspace. Submission methods require the executor trait:
+Add both crates from crates.io. Submission methods require the executor trait:
 
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
+qubit-rayon-executor = "0.7"
 ```
 
 Rust 1.94 or later is required.
