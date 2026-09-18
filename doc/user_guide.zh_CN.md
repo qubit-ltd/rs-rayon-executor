@@ -10,7 +10,7 @@
 
 `RayonExecutorServiceBuilder` 创建独立的 Rayon 池，`RayonExecutorService` 通过 `ExecutorService` 接受任务。每项已接纳任务都处于排队、运行或取消中之一，三种状态都会占用 `task_capacity`；默认容量为 1024。无需结果的 runnable 使用 `submit`；只关心结果时使用 `submit_callable`；需要状态或尽力取消尚未开始的任务时使用 tracked 提交方法。
 
-```
+```text
 调用方 -> 已接纳任务的容量上限 -> Rayon 池 -> 任务句柄
                             \-> 容量用尽时返回 Saturated
 ```
@@ -21,12 +21,12 @@
 
 ### 安装与最小配置
 
-该包配置了 `publish = false`，请从 Qubit 源码树或工作区中引用。提交方法所需 trait 来自 `qubit-executor`：
+从 crates.io 添加以下两个 crate。提交方法所需 trait 来自 `qubit-executor`：
 
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
+qubit-rayon-executor = "0.7"
 ```
 
 ### 核心工作流
@@ -46,14 +46,17 @@ fn aggregate() -> Result<usize, Box<dyn std::error::Error>> {
         .thread_name_prefix("cpu-worker")
         .build()?;
     let values = vec![8_usize, 13, 21, 34];
-    let handle = service.submit_callable(move || Ok::<usize, io::Error>(values.into_iter().sum()))?;
+    let handle = service.submit_callable(move || Ok::<usize, io::Error>(values.iter().copied().sum()))?;
     let total = handle.get()?;
     service.shutdown();
     service.wait_termination();
     Ok(total)
 }
 
-assert_eq!(aggregate()?, 76);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(aggregate()?, 76);
+    Ok(())
+}
 ```
 
 `submit_callable` 成功只表示服务接纳了任务，并不表示 callable 已经成功完成。请从 `TaskHandle` 取得结果，以观察任务自己的错误或 panic。`shutdown` 会让已接纳任务完成，`wait_termination` 则等待它们进入终态。
@@ -71,22 +74,25 @@ use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
-let service = RayonExecutorService::builder().num_threads(1).task_capacity(2).build()?;
-let (started_tx, started_rx) = mpsc::channel();
-let (release_tx, release_rx) = mpsc::channel();
-let running = service.submit_tracked(move || {
-    started_tx.send(()).expect("记录任务已启动");
-    release_rx.recv().map_err(|error| io::Error::other(error.to_string()))?;
-    Ok::<(), io::Error>(())
-})?;
-started_rx.recv()?;
-let queued = service.submit_tracked_callable(|| Ok::<(), io::Error>(()))?;
-assert_eq!(queued.cancel(), CancelResult::Cancelled);
-assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
-release_tx.send(())?;
-running.get()?;
-service.shutdown();
-service.wait_termination();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(1).task_capacity(2).build()?;
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let running = service.submit_tracked(move || {
+        started_tx.send(()).expect("记录任务已启动");
+        release_rx.recv().map_err(|error| io::Error::other(error.to_string()))?;
+        Ok::<(), io::Error>(())
+    })?;
+    started_rx.recv()?;
+    let queued = service.submit_tracked_callable(|| Ok::<(), io::Error>(()))?;
+    assert_eq!(queued.cancel(), CancelResult::Cancelled);
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    release_tx.send(())?;
+    running.get()?;
+    service.shutdown();
+    service.wait_termination();
+    Ok(())
+}
 ```
 
 关闭时若要放弃队列任务，请调用 `stop`。它的 `StopReport` 会记录排队、运行和已取消的任务数，但不能强制中断已经运行的 Rayon 任务。

@@ -18,7 +18,7 @@ task is queued, running, or being cancelled; all three states consume
 `submit_callable` for a result, and tracked submissions for status or
 best-effort cancellation before work starts.
 
-```
+```text
 caller -> bounded accepted-task capacity -> Rayon pool -> task handle
                                       \-> Saturated when capacity is full
 ```
@@ -30,13 +30,13 @@ domains. Success means receiving the total and then cleanly ending admission.
 
 ### Installation and Minimal Configuration
 
-The package has `publish = false`, so use it from the Qubit source tree or
-workspace. The submission trait is provided by `qubit-executor`:
+Add both crates from crates.io. The submission trait is provided by
+`qubit-executor`:
 
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
+qubit-rayon-executor = "0.7"
 ```
 
 ### Core Workflow
@@ -57,14 +57,17 @@ fn aggregate() -> Result<usize, Box<dyn std::error::Error>> {
         .thread_name_prefix("cpu-worker")
         .build()?;
     let values = vec![8_usize, 13, 21, 34];
-    let handle = service.submit_callable(move || Ok::<usize, io::Error>(values.into_iter().sum()))?;
+    let handle = service.submit_callable(move || Ok::<usize, io::Error>(values.iter().copied().sum()))?;
     let total = handle.get()?;
     service.shutdown();
     service.wait_termination();
     Ok(total)
 }
 
-assert_eq!(aggregate()?, 76);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(aggregate()?, 76);
+    Ok(())
+}
 ```
 
 Successful submission means that the service accepted the task, not that the
@@ -87,22 +90,25 @@ use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
 
-let service = RayonExecutorService::builder().num_threads(1).task_capacity(2).build()?;
-let (started_tx, started_rx) = mpsc::channel();
-let (release_tx, release_rx) = mpsc::channel();
-let running = service.submit_tracked(move || {
-    started_tx.send(()).expect("record task start");
-    release_rx.recv().map_err(|error| io::Error::other(error.to_string()))?;
-    Ok::<(), io::Error>(())
-})?;
-started_rx.recv()?;
-let queued = service.submit_tracked_callable(|| Ok::<(), io::Error>(()))?;
-assert_eq!(queued.cancel(), CancelResult::Cancelled);
-assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
-release_tx.send(())?;
-running.get()?;
-service.shutdown();
-service.wait_termination();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(1).task_capacity(2).build()?;
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let running = service.submit_tracked(move || {
+        started_tx.send(()).expect("record task start");
+        release_rx.recv().map_err(|error| io::Error::other(error.to_string()))?;
+        Ok::<(), io::Error>(())
+    })?;
+    started_rx.recv()?;
+    let queued = service.submit_tracked_callable(|| Ok::<(), io::Error>(()))?;
+    assert_eq!(queued.cancel(), CancelResult::Cancelled);
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    release_tx.send(())?;
+    running.get()?;
+    service.shutdown();
+    service.wait_termination();
+    Ok(())
+}
 ```
 
 Call `stop` to abandon queued work. Its `StopReport` records queued, running,
