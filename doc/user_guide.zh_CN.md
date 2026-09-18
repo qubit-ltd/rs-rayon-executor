@@ -26,7 +26,7 @@
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { path = "../rs-rayon-executor" }
+qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
 ```
 
 ### 核心工作流

@@ -16,7 +16,7 @@ Qubit Rayon Executor 为需要处理 CPU 密集型同步任务的 Rust 库提供
 ```toml
 [dependencies]
 qubit-executor = "0.8"
-qubit-rayon-executor = { path = "../rs-rayon-executor" }
+qubit-rayon-executor = { version = "0.7", path = "../rs-rayon-executor" }
 ```
 
 本 crate 需要 Rust 1.94 或更高版本。
