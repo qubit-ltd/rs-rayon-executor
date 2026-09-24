@@ -55,6 +55,19 @@ pub struct RayonExecutorService {
 }
 
 impl RayonExecutorService {
+    /// Waits asynchronously for shutdown or stop and all accepted work.
+    ///
+    /// The wait occupies no Rayon or Tokio blocking thread. Dropping this
+    /// future cancels only the wait and leaves the service lifecycle intact.
+    #[cfg(feature = "async-wait")]
+    pub async fn await_termination(&self) {
+        let mut receiver = self.state.subscribe_termination();
+        receiver
+            .wait_for(|terminated| *terminated)
+            .await
+            .expect("service state outlives a borrowed termination wait");
+    }
+
     /// Creates a Rayon executor service with the default builder settings.
     ///
     /// # Returns
