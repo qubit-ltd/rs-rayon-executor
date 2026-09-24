@@ -16,6 +16,8 @@ use parking_lot::Mutex;
 use qubit_executor::service::ExecutorServiceLifecycle;
 use qubit_executor::service::StopReport;
 use qubit_executor::service::SubmissionError;
+#[cfg(feature = "async-wait")]
+use tokio::sync::watch;
 
 use crate::internal::Admission;
 use crate::internal::CancelDisposition;
@@ -31,6 +33,9 @@ pub(crate) struct RayonExecutorServiceState {
     inner: Mutex<RayonExecutorServiceInner>,
     /// Condition variable notified when accepted work reaches termination.
     terminated: Condvar,
+    /// Monotonic notification for asynchronous termination waiters.
+    #[cfg(feature = "async-wait")]
+    termination_tx: watch::Sender<bool>,
 }
 
 impl RayonExecutorServiceState {
@@ -57,7 +62,19 @@ impl RayonExecutorServiceState {
                 cancelling: BTreeSet::new(),
             }),
             terminated: Condvar::new(),
+            #[cfg(feature = "async-wait")]
+            termination_tx: watch::channel(false).0,
         })
+    }
+
+    /// Subscribes to termination under the same lock as state transitions.
+    #[cfg(feature = "async-wait")]
+    pub(crate) fn subscribe_termination(&self) -> watch::Receiver<bool> {
+        let inner = self.inner.lock();
+        if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
+            self.termination_tx.send_replace(true);
+        }
+        self.termination_tx.subscribe()
     }
 
     /// Accepts a queued job if lifecycle and capacity permit it.
@@ -188,6 +205,7 @@ impl RayonExecutorServiceState {
             inner.cancelling.insert(task_id);
             owned.push((task_id, job));
         }
+        self.notify_if_terminated_locked(&inner);
         (StopReport::new(queued, running, owned.len()), owned)
     }
 
@@ -252,6 +270,8 @@ impl RayonExecutorServiceState {
     /// terminal state.
     fn notify_if_terminated_locked(&self, inner: &RayonExecutorServiceInner) {
         if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(inner) == 0 {
+            #[cfg(feature = "async-wait")]
+            self.termination_tx.send_replace(true);
             self.terminated.notify_all();
         }
     }

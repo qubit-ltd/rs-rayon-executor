@@ -31,9 +31,14 @@ include = [
 name = "qubit_rayon_executor"
 doctest = true
 
+[features]
+default = []
+async-wait = ["dep:tokio"]
+
 [dependencies]
 rayon = "^1.12"
 thiserror = "^2.0"
+tokio = { version = "^1.53", features = ["sync"], optional = true }
 
 parking_lot = "^0.12"
 qubit-executor = "0.8"
