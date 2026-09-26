@@ -21,6 +21,7 @@ use qubit_function::Callable;
 use qubit_function::Runnable;
 use rayon::ThreadPool as RayonThreadPool;
 
+use crate::RayonExecutorServiceStats;
 use crate::internal::Admission;
 use crate::internal::CallableJob;
 use crate::internal::RunnableJob;
@@ -81,6 +82,32 @@ impl RayonExecutorService {
     /// default thread-pool configuration.
     pub fn new() -> Result<Self, RayonExecutorServiceBuildError> {
         Self::builder().build()
+    }
+
+    /// Returns a consistent snapshot of the current service state.
+    ///
+    /// # Returns
+    ///
+    /// The queue, running, cancelling, capacity, and lifecycle counts sampled
+    /// under the service state mutex.
+    #[must_use]
+    #[inline]
+    pub fn stats(&self) -> RayonExecutorServiceStats {
+        self.state.stats()
+    }
+
+    /// Subscribes to changes that may make another task admissible.
+    ///
+    /// A notification is only a hint; callers must retry submission because
+    /// another producer may consume the available capacity first.
+    ///
+    /// # Returns
+    ///
+    /// A receiver that observes capacity and lifecycle changes.
+    #[cfg(feature = "async-wait")]
+    #[must_use]
+    pub fn capacity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.state.capacity_changes()
     }
 
     /// Creates a builder for configuring a Rayon executor service.
