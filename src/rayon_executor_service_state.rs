@@ -19,6 +19,7 @@ use qubit_executor::service::SubmissionError;
 #[cfg(feature = "async-wait")]
 use tokio::sync::watch;
 
+use crate::RayonExecutorServiceStats;
 use crate::internal::Admission;
 use crate::internal::CancelDisposition;
 use crate::internal::RayonExecutorServiceInner;
@@ -36,6 +37,9 @@ pub(crate) struct RayonExecutorServiceState {
     /// Monotonic notification for asynchronous termination waiters.
     #[cfg(feature = "async-wait")]
     termination_tx: watch::Sender<bool>,
+    /// Generation counter notifying asynchronous capacity waiters.
+    #[cfg(feature = "async-wait")]
+    capacity_tx: watch::Sender<u64>,
 }
 
 impl RayonExecutorServiceState {
@@ -64,6 +68,8 @@ impl RayonExecutorServiceState {
             terminated: Condvar::new(),
             #[cfg(feature = "async-wait")]
             termination_tx: watch::channel(false).0,
+            #[cfg(feature = "async-wait")]
+            capacity_tx: watch::channel(0).0,
         })
     }
 
@@ -75,6 +81,39 @@ impl RayonExecutorServiceState {
             self.termination_tx.send_replace(true);
         }
         self.termination_tx.subscribe()
+    }
+
+    /// Subscribes to state changes that may affect task admission.
+    ///
+    /// # Returns
+    ///
+    /// A receiver that changes when service capacity or lifecycle changes. A
+    /// notification is only a hint; callers must retry admission.
+    #[cfg(feature = "async-wait")]
+    pub(crate) fn capacity_changes(&self) -> watch::Receiver<u64> {
+        let _inner = self.inner.lock();
+        self.capacity_tx.subscribe()
+    }
+
+    /// Returns a consistent snapshot of queue, worker, and lifecycle state.
+    ///
+    /// # Returns
+    ///
+    /// The configured capacity and current counts sampled under the state lock.
+    pub(crate) fn stats(&self) -> RayonExecutorServiceStats {
+        let inner = self.inner.lock();
+        let lifecycle = if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
+            ExecutorServiceLifecycle::Terminated
+        } else {
+            inner.lifecycle
+        };
+        RayonExecutorServiceStats {
+            lifecycle,
+            task_capacity: inner.task_capacity,
+            queued: inner.queue.len(),
+            running: inner.running,
+            cancelling: inner.cancelling.len(),
+        }
     }
 
     /// Accepts a queued job if lifecycle and capacity permit it.
@@ -137,6 +176,7 @@ impl RayonExecutorServiceState {
         if !dispatch {
             inner.scheduled = inner.scheduled.saturating_sub(1);
         }
+        self.notify_capacity_changed_locked();
         self.notify_if_terminated_locked(&inner);
         dispatch
     }
@@ -172,6 +212,7 @@ impl RayonExecutorServiceState {
     pub(crate) fn finish_cancelling(&self, task_id: usize) {
         let mut inner = self.inner.lock();
         inner.cancelling.remove(&task_id);
+        self.notify_capacity_changed_locked();
         self.notify_if_terminated_locked(&inner);
         self.terminated.notify_all();
     }
@@ -185,6 +226,7 @@ impl RayonExecutorServiceState {
         if inner.lifecycle == ExecutorServiceLifecycle::Running {
             inner.lifecycle = ExecutorServiceLifecycle::ShuttingDown;
         }
+        self.notify_capacity_changed_locked();
         self.notify_if_terminated_locked(&inner);
     }
 
@@ -205,6 +247,7 @@ impl RayonExecutorServiceState {
             inner.cancelling.insert(task_id);
             owned.push((task_id, job));
         }
+        self.notify_capacity_changed_locked();
         self.notify_if_terminated_locked(&inner);
         (StopReport::new(queued, running, owned.len()), owned)
     }
@@ -268,6 +311,16 @@ impl RayonExecutorServiceState {
 
     /// Wakes termination waiters after the final accepted task reaches a
     /// terminal state.
+    #[cfg(feature = "async-wait")]
+    fn notify_capacity_changed_locked(&self) {
+        self.capacity_tx
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+    }
+
+    #[cfg(not(feature = "async-wait"))]
+    fn notify_capacity_changed_locked(&self) {}
+
+    /// Wakes termination waiters after the final accepted task is terminal.
     fn notify_if_terminated_locked(&self, inner: &RayonExecutorServiceInner) {
         if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(inner) == 0 {
             #[cfg(feature = "async-wait")]

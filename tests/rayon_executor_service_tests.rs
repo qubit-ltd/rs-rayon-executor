@@ -282,3 +282,95 @@ async fn test_rayon_executor_service_await_termination_waits_before_shutdown() {
     service.shutdown();
     waiter.await.expect("termination waiter should finish after shutdown");
 }
+
+#[test]
+fn test_rayon_executor_service_stats_report_capacity_and_task_states() {
+    let service = create_single_worker_service();
+    let (_running, release_tx) = submit_blocking_task(&service);
+    let _queued = service
+        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("task should be accepted");
+
+    let stats = service.stats();
+    assert_eq!(stats.task_capacity, 1024);
+    assert_eq!(stats.queued, 1);
+    assert_eq!(stats.running, 1);
+    assert_eq!(stats.cancelling, 0);
+    assert_eq!(stats.lifecycle, ExecutorServiceLifecycle::Running);
+
+    service.stop();
+    release_tx.send(()).expect("running task should be released");
+    service.wait_termination();
+}
+
+#[cfg(feature = "async-wait")]
+#[tokio::test]
+async fn test_rayon_executor_service_capacity_changes_wake_on_task_completion() {
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .task_capacity(1)
+        .build()
+        .expect("service should be created");
+    let (_running, release_tx) = submit_blocking_task(&service);
+    let mut changes = service.capacity_changes();
+    assert!(matches!(
+        service.submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>),
+        Err(SubmissionError::Saturated)
+    ));
+
+    release_tx.send(()).expect("running task should be released");
+    tokio::time::timeout(Duration::from_secs(1), changes.changed())
+        .await
+        .expect("completion should publish a capacity change")
+        .expect("capacity notification sender should remain open");
+    let handle = service
+        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("released capacity should accept another task");
+    assert_eq!(handle.get().expect("task should finish"), 42);
+    service.shutdown();
+    service.await_termination().await;
+}
+
+#[cfg(feature = "async-wait")]
+#[tokio::test]
+async fn test_rayon_executor_service_shutdown_publishes_capacity_change() {
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .build()
+        .expect("service should be created");
+    let mut changes = service.capacity_changes();
+
+    service.shutdown();
+    tokio::time::timeout(Duration::from_secs(1), changes.changed())
+        .await
+        .expect("shutdown should publish a capacity change")
+        .expect("capacity notification sender should remain open");
+    service.await_termination().await;
+}
+
+#[cfg(feature = "async-wait")]
+#[tokio::test]
+async fn test_rayon_executor_service_queued_cancellation_publishes_capacity_change() {
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .task_capacity(2)
+        .build()
+        .expect("service should be created");
+    let (_running, release_tx) = submit_blocking_task(&service);
+    let queued = service
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("queued task should be accepted");
+    let mut changes = service.capacity_changes();
+
+    assert_eq!(queued.cancel(), qubit_executor::CancelResult::Cancelled);
+    tokio::time::timeout(Duration::from_secs(1), changes.changed())
+        .await
+        .expect("cancellation should publish a capacity change")
+        .expect("capacity notification sender should remain open");
+    service
+        .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("cancelled queue slot should be reusable");
+    service.stop();
+    release_tx.send(()).expect("running task should be released");
+    service.await_termination().await;
+}
