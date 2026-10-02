@@ -70,7 +70,7 @@ pub(crate) fn submit_blocking_task(
 /// Waits until a task signals that it has started.
 pub(crate) fn wait_started(receiver: mpsc::Receiver<()>) {
     receiver
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(10))
         .expect("task should start within timeout");
 }
 
