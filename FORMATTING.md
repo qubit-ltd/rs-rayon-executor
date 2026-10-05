@@ -35,18 +35,18 @@ cargo +nightly fmt -- --config-path .infra/style/rustfmt.toml
 ### Option 2: CI-Style Local Check
 
 ```bash
-./align-ci.sh
-./ci-check.sh
+./.infra/bin/align-ci.sh
+./.infra/bin/ci-check.sh
 ```
 
-`./align-ci.sh` synchronizes the shared CI helper scripts and formatting
-configuration, then `./ci-check.sh` runs the same checks used by CI.
+`./.infra/bin/align-ci.sh` synchronizes the shared CI helper scripts and formatting
+configuration, then `./.infra/bin/ci-check.sh` runs the same checks used by CI.
 
 ## CI/CD Integration
 
-Both the local CI check script (`ci-check.sh`) and CircleCI configuration (`.circleci/config.yml`) have been configured to use nightly Rust:
+Both the local CI check script (`.infra/bin/ci-check.sh`) and CircleCI configuration (`.circleci/config.yml`) have been configured to use nightly Rust:
 
-- **Local checks**: Run `./ci-check.sh` before committing (automatically installs nightly if needed)
+- **Local checks**: Run `./.infra/bin/ci-check.sh` before committing (automatically installs nightly if needed)
 - **CircleCI**: Uses `rustlang/rust:nightly` Docker image for all jobs
 
 ## Configuration
@@ -64,7 +64,7 @@ This is the **only configuration option** needed to achieve our desired formatti
 
 1. **All CI jobs use nightly Rust**: The entire CI pipeline uses nightly Rust toolchain for consistency
 2. **Local development**: Can use either stable or nightly; formatting requires nightly
-3. **Automatic installation**: The `ci-check.sh` script automatically installs nightly toolchain if needed
+3. **Automatic installation**: The `.infra/bin/ci-check.sh` script automatically installs nightly toolchain if needed
 4. **Docker image**: CircleCI uses the official `rustlang/rust:nightly` Docker image
 5. **No manual intervention**: Developers don't need to manually switch toolchains
 
