@@ -127,7 +127,9 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
             })
             .collect::<Vec<_>>();
 
-        release_tx.send(()).expect("running task should receive release signal");
+        release_tx
+            .send(())
+            .expect("running task should receive release signal");
         for handle in &queued_handles {
             assert_ne!(
                 handle.cancel(),
@@ -136,7 +138,9 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
             );
         }
 
-        running.get().expect("running task should complete normally");
+        running
+            .get()
+            .expect("running task should complete normally");
         for handle in queued_handles {
             let _ = handle.get();
         }

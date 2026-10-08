@@ -17,8 +17,8 @@ Add both crates from crates.io. Submission methods require the executor trait:
 
 ```toml
 [dependencies]
-qubit-executor = "0.8"
-qubit-rayon-executor = "0.8"
+qubit-executor = "0.9"
+qubit-rayon-executor = "0.9"
 ```
 
 Rust 1.94 or later is required.

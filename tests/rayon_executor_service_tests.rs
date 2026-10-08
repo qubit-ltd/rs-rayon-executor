@@ -57,7 +57,10 @@ fn test_rayon_executor_service_submit_callable_returns_value() {
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
-    assert_eq!(handle.get().expect("callable should complete successfully"), 42,);
+    assert_eq!(
+        handle.get().expect("callable should complete successfully"),
+        42,
+    );
     service.shutdown();
     service.wait_termination();
 }
@@ -117,7 +120,9 @@ fn test_rayon_executor_service_wait_termination_timeout_reports_pending() {
     service.shutdown();
     assert!(!service.wait_termination_timeout(Duration::from_millis(1)));
 
-    release_tx.send(()).expect("running task should receive release signal");
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
     service.wait_termination();
 }
 
@@ -133,9 +138,16 @@ fn test_rayon_executor_service_shutdown_allows_queued_tasks_to_finish() {
     let rejected = service.submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>);
     assert!(matches!(rejected, Err(SubmissionError::Shutdown)));
 
-    release_tx.send(()).expect("running task should receive release signal");
-    running.get().expect("running task should complete normally");
-    assert_eq!(queued.get().expect("queued task should complete normally"), 42);
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
+    running
+        .get()
+        .expect("running task should complete normally");
+    assert_eq!(
+        queued.get().expect("queued task should complete normally"),
+        42
+    );
     service.wait_termination();
     assert!(service.is_terminated());
 }
@@ -255,15 +267,21 @@ fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
         "one concurrent stop should cancel all queued tasks: {reports:?}",
     );
     assert!(
-        reports.iter().any(|report| report.queued == 0 && report.cancelled == 0),
+        reports
+            .iter()
+            .any(|report| report.queued == 0 && report.cancelled == 0),
         "one concurrent stop should observe no remaining queued tasks: {reports:?}",
     );
     for queued in queued_handles {
         assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     }
 
-    release_tx.send(()).expect("running task should receive release signal");
-    running.get().expect("running task should complete normally");
+    release_tx
+        .send(())
+        .expect("running task should receive release signal");
+    running
+        .get()
+        .expect("running task should complete normally");
     service.wait_termination();
     assert!(service.is_terminated());
 }
@@ -280,7 +298,9 @@ async fn test_rayon_executor_service_await_termination_waits_before_shutdown() {
     assert!(!waiter.is_finished());
 
     service.shutdown();
-    waiter.await.expect("termination waiter should finish after shutdown");
+    waiter
+        .await
+        .expect("termination waiter should finish after shutdown");
 }
 
 #[test]
@@ -299,7 +319,9 @@ fn test_rayon_executor_service_stats_report_capacity_and_task_states() {
     assert_eq!(stats.lifecycle, ExecutorServiceLifecycle::Running);
 
     service.stop();
-    release_tx.send(()).expect("running task should be released");
+    release_tx
+        .send(())
+        .expect("running task should be released");
     service.wait_termination();
 }
 
@@ -318,7 +340,9 @@ async fn test_rayon_executor_service_capacity_changes_wake_on_task_completion() 
         Err(SubmissionError::Saturated)
     ));
 
-    release_tx.send(()).expect("running task should be released");
+    release_tx
+        .send(())
+        .expect("running task should be released");
     tokio::time::timeout(Duration::from_secs(1), changes.changed())
         .await
         .expect("completion should publish a capacity change")
@@ -371,6 +395,8 @@ async fn test_rayon_executor_service_queued_cancellation_publishes_capacity_chan
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("cancelled queue slot should be reusable");
     service.stop();
-    release_tx.send(()).expect("running task should be released");
+    release_tx
+        .send(())
+        .expect("running task should be released");
     service.await_termination().await;
 }

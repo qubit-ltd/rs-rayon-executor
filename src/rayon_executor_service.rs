@@ -233,7 +233,10 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    fn submit_tracked_callable<C, R, E>(&self, task: C) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
+    fn submit_tracked_callable<C, R, E>(
+        &self,
+        task: C,
+    ) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
@@ -246,7 +249,11 @@ impl ExecutorService for RayonExecutorService {
             dispatch_count,
         } = self.state.admit(job)?;
         self.dispatch(dispatch_count);
-        Ok(RayonTaskHandle::new(handle, task_id, Arc::clone(&self.state)))
+        Ok(RayonTaskHandle::new(
+            handle,
+            task_id,
+            Arc::clone(&self.state),
+        ))
     }
 
     /// Stops accepting new tasks while allowing accepted tasks to finish.

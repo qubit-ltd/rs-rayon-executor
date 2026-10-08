@@ -1,6 +1,6 @@
 # Qubit Rayon Executor User Guide
 
-[中文版](user_guide.zh_CN.md) | Applies to `qubit-rayon-executor` 0.8.0 and Rust 1.94+
+[中文版](user_guide.zh_CN.md) | Applies to `qubit-rayon-executor` 0.9 and Rust 1.94+
 
 ## Purpose and Audience
 
@@ -35,8 +35,8 @@ Add both crates from crates.io. The submission trait is provided by
 
 ```toml
 [dependencies]
-qubit-executor = "0.8"
-qubit-rayon-executor = "0.7"
+qubit-executor = "0.9"
+qubit-rayon-executor = "0.9"
 ```
 
 ### Core Workflow

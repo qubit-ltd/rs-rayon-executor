@@ -66,8 +66,16 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// # Returns
     ///
     /// A tracked handle for the accepted Rayon task.
-    pub(crate) fn new(inner: TrackedTask<R, E>, task_id: usize, state: Arc<RayonExecutorServiceState>) -> Self {
-        Self { inner, task_id, state }
+    pub(crate) fn new(
+        inner: TrackedTask<R, E>,
+        task_id: usize,
+        state: Arc<RayonExecutorServiceState>,
+    ) -> Self {
+        Self {
+            inner,
+            task_id,
+            state,
+        }
     }
 
     /// Blocks until the task finishes and returns its final result.
@@ -166,10 +174,18 @@ where
     /// Attempts to retrieve the inner tracked task result without blocking.
     #[inline]
     fn try_get(self) -> TryGet<Self, R, E> {
-        let Self { inner, task_id, state } = self;
+        let Self {
+            inner,
+            task_id,
+            state,
+        } = self;
         match inner.try_get() {
             TryGet::Ready(result) => TryGet::Ready(result),
-            TryGet::Pending(inner) => TryGet::Pending(Self { inner, task_id, state }),
+            TryGet::Pending(inner) => TryGet::Pending(Self {
+                inner,
+                task_id,
+                state,
+            }),
         }
     }
 }

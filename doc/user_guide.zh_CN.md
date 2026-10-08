@@ -1,6 +1,6 @@
 # Qubit Rayon Executor 用户手册
 
-[English guide](user_guide.md) | 适用于 `qubit-rayon-executor` 0.8.0 与 Rust 1.94+
+[English guide](user_guide.md) | 适用于 `qubit-rayon-executor` 0.9 与 Rust 1.94+
 
 ## 手册目标与读者
 
@@ -25,8 +25,8 @@
 
 ```toml
 [dependencies]
-qubit-executor = "0.8"
-qubit-rayon-executor = "0.7"
+qubit-executor = "0.9"
+qubit-rayon-executor = "0.9"
 ```
 
 ### 核心工作流

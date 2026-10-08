@@ -50,7 +50,9 @@ fn test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity() {
         service.submit_callable(|| Ok::<(), io::Error>(())),
         Err(SubmissionError::Shutdown)
     ));
-    release_tx.send(()).expect("running task should be released");
+    release_tx
+        .send(())
+        .expect("running task should be released");
     running.get().expect("running task should finish");
     replacement.get().expect("replacement task should finish");
     service.wait_termination();

@@ -50,12 +50,18 @@ async fn test_rayon_await_termination_waits_for_running_task_and_multiple_waiter
     service.shutdown();
     let first = service.await_termination();
     tokio::pin!(first);
-    assert!(timeout(Duration::from_millis(20), &mut first).await.is_err());
+    assert!(
+        timeout(Duration::from_millis(20), &mut first)
+            .await
+            .is_err()
+    );
     let second = service.await_termination();
     release_tx.send(()).expect("task should release");
-    timeout(Duration::from_secs(1), async { tokio::join!(first, second) })
-        .await
-        .expect("both waiters should complete");
+    timeout(Duration::from_secs(1), async {
+        tokio::join!(first, second)
+    })
+    .await
+    .expect("both waiters should complete");
 }
 
 #[tokio::test]
