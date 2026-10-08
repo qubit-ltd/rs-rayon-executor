@@ -102,12 +102,11 @@ impl RayonExecutorServiceState {
     /// The configured capacity and current counts sampled under the state lock.
     pub(crate) fn stats(&self) -> RayonExecutorServiceStats {
         let inner = self.inner.lock();
-        let lifecycle =
-            if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
-                ExecutorServiceLifecycle::Terminated
-            } else {
-                inner.lifecycle
-            };
+        let lifecycle = if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
+            ExecutorServiceLifecycle::Terminated
+        } else {
+            inner.lifecycle
+        };
         RayonExecutorServiceStats {
             lifecycle,
             task_capacity: inner.task_capacity,
@@ -135,16 +134,10 @@ impl RayonExecutorServiceState {
             return Err(SubmissionError::Saturated);
         }
         let task_id = inner.next_task_id;
-        inner.next_task_id = inner
-            .next_task_id
-            .checked_add(1)
-            .expect("task id exhausted");
+        inner.next_task_id = inner.next_task_id.checked_add(1).expect("task id exhausted");
         job.accept();
         inner.queue.insert(task_id, job);
-        let dispatch_count = inner
-            .queue
-            .len()
-            .min(inner.num_threads.saturating_sub(inner.scheduled));
+        let dispatch_count = inner.queue.len().min(inner.num_threads.saturating_sub(inner.scheduled));
         inner.scheduled += dispatch_count;
         debug_assert!(inner.scheduled <= inner.num_threads);
         Ok(Admission {
