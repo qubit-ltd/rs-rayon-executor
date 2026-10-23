@@ -10,6 +10,7 @@
 use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
+use std::time::Instant;
 
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
@@ -79,8 +80,8 @@ pub(crate) fn wait_until<F>(mut condition: F)
 where
     F: FnMut() -> bool,
 {
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while std::time::Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
         if condition() {
             return;
         }
