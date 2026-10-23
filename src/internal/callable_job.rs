@@ -21,6 +21,8 @@ pub(crate) struct CallableJob<C, R, E> {
 
 impl<C, R, E> CallableJob<C, R, E> {
     /// Stores a callable and its completion slot until a worker handles it.
+    #[must_use]
+    #[inline]
     pub(crate) const fn new(task: C, slot: TaskSlot<R, E>) -> Self {
         Self { task, slot }
     }

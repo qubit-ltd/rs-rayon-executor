@@ -100,6 +100,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// The configured capacity and current counts sampled under the state lock.
+    #[must_use]
     pub(crate) fn stats(&self) -> RayonExecutorServiceStats {
         let inner = self.inner.lock();
         let lifecycle = if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
@@ -114,6 +115,32 @@ impl RayonExecutorServiceState {
             running: inner.running,
             cancelling: inner.cancelling.len(),
         }
+    }
+
+    /// Returns the current lifecycle, deriving termination from task counters.
+    ///
+    /// # Returns
+    ///
+    /// `Terminated` after shutdown or stop when no accepted task remains;
+    /// otherwise the current nonterminal lifecycle.
+    #[must_use = "the lifecycle must be checked"]
+    pub(crate) fn lifecycle(&self) -> ExecutorServiceLifecycle {
+        let inner = self.inner.lock();
+        if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
+            ExecutorServiceLifecycle::Terminated
+        } else {
+            inner.lifecycle
+        }
+    }
+
+    /// Returns whether new submissions are rejected.
+    ///
+    /// # Returns
+    ///
+    /// `true` once graceful shutdown or stop has begun.
+    #[must_use]
+    pub(crate) fn is_not_running(&self) -> bool {
+        self.inner.lock().lifecycle != ExecutorServiceLifecycle::Running
     }
 
     /// Accepts a queued job if lifecycle and capacity permit it.
@@ -169,6 +196,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` when queued work needs the same worker reservation to run next.
+    #[must_use]
     pub(crate) fn finish_running(&self) -> bool {
         let mut inner = self.inner.lock();
         inner.running = inner.running.saturating_sub(1);
@@ -192,6 +220,7 @@ impl RayonExecutorServiceState {
     ///
     /// The ownership disposition that tells the caller whether it must cancel
     /// a queued job after releasing the mutex.
+    #[must_use]
     pub(crate) fn cancel_pending_task(&self, task_id: usize) -> CancelDisposition {
         let mut inner = self.inner.lock();
         if let Some(job) = inner.queue.remove(&task_id) {
@@ -236,6 +265,7 @@ impl RayonExecutorServiceState {
     ///
     /// A stop report and jobs that the caller must cancel outside this mutex to
     /// avoid executing user cleanup while holding service state.
+    #[must_use]
     pub(crate) fn stop(&self) -> (StopReport, OwnedQueuedJobs) {
         let mut inner = self.inner.lock();
         inner.lifecycle = ExecutorServiceLifecycle::Stopping;
@@ -250,30 +280,6 @@ impl RayonExecutorServiceState {
         self.notify_capacity_changed_locked();
         self.notify_if_terminated_locked(&inner);
         (StopReport::new(queued, running, owned.len()), owned)
-    }
-
-    /// Returns the current lifecycle, deriving termination from task counters.
-    ///
-    /// # Returns
-    ///
-    /// `Terminated` after shutdown or stop when no accepted task remains;
-    /// otherwise the current nonterminal lifecycle.
-    pub(crate) fn lifecycle(&self) -> ExecutorServiceLifecycle {
-        let inner = self.inner.lock();
-        if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0 {
-            ExecutorServiceLifecycle::Terminated
-        } else {
-            inner.lifecycle
-        }
-    }
-
-    /// Returns whether new submissions are rejected.
-    ///
-    /// # Returns
-    ///
-    /// `true` once graceful shutdown or stop has begun.
-    pub(crate) fn is_not_running(&self) -> bool {
-        self.inner.lock().lifecycle != ExecutorServiceLifecycle::Running
     }
 
     /// Waits until lifecycle termination.
@@ -296,6 +302,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` after termination is observed; `false` when the timeout expires.
+    #[must_use]
     pub(crate) fn wait_for_termination_timeout(&self, timeout: Duration) -> bool {
         let started = Instant::now();
         let mut guard = self.inner.lock();

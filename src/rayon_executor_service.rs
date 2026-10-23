@@ -56,19 +56,6 @@ pub struct RayonExecutorService {
 }
 
 impl RayonExecutorService {
-    /// Waits asynchronously for shutdown or stop and all accepted work.
-    ///
-    /// The wait occupies no Rayon or Tokio blocking thread. Dropping this
-    /// future cancels only the wait and leaves the service lifecycle intact.
-    #[cfg(feature = "async-wait")]
-    pub async fn await_termination(&self) {
-        let mut receiver = self.state.subscribe_termination();
-        receiver
-            .wait_for(|terminated| *terminated)
-            .await
-            .expect("service state outlives a borrowed termination wait");
-    }
-
     /// Creates a Rayon executor service with the default builder settings.
     ///
     /// # Returns
@@ -82,6 +69,30 @@ impl RayonExecutorService {
     /// default thread-pool configuration.
     pub fn new() -> Result<Self, RayonExecutorServiceBuildError> {
         Self::builder().build()
+    }
+
+    /// Creates a builder for configuring a Rayon executor service.
+    ///
+    /// # Returns
+    ///
+    /// A builder initialized with CPU-parallelism defaults.
+    #[must_use]
+    #[inline]
+    pub fn builder() -> RayonExecutorServiceBuilder {
+        RayonExecutorServiceBuilder::default()
+    }
+
+    /// Waits asynchronously for shutdown or stop and all accepted work.
+    ///
+    /// The wait occupies no Rayon or Tokio blocking thread. Dropping this
+    /// future cancels only the wait and leaves the service lifecycle intact.
+    #[cfg(feature = "async-wait")]
+    pub async fn await_termination(&self) {
+        let mut receiver = self.state.subscribe_termination();
+        receiver
+            .wait_for(|terminated| *terminated)
+            .await
+            .expect("service state outlives a borrowed termination wait");
     }
 
     /// Returns a consistent snapshot of the current service state.
@@ -106,18 +117,9 @@ impl RayonExecutorService {
     /// A receiver that observes capacity and lifecycle changes.
     #[cfg(feature = "async-wait")]
     #[must_use]
+    #[inline]
     pub fn capacity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
         self.state.capacity_changes()
-    }
-
-    /// Creates a builder for configuring a Rayon executor service.
-    ///
-    /// # Returns
-    ///
-    /// A builder initialized with CPU-parallelism defaults.
-    #[must_use]
-    pub fn builder() -> RayonExecutorServiceBuilder {
-        RayonExecutorServiceBuilder::default()
     }
 
     /// Admits a callable after converting its endpoint pair into a handle and

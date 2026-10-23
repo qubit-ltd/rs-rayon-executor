@@ -19,6 +19,7 @@ use thiserror::Error;
 /// let error = RayonExecutorService::builder().num_threads(0).build();
 /// assert!(matches!(error, Err(RayonExecutorServiceBuildError::ZeroThreadCount)));
 /// ```
+#[must_use]
 #[derive(Debug, Error)]
 pub enum RayonExecutorServiceBuildError {
     /// Indicates that the configured Rayon thread count is zero.

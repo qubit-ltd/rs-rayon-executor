@@ -22,6 +22,8 @@ pub(crate) struct RunnableJob<T, E> {
 
 impl<T, E> RunnableJob<T, E> {
     /// Stores a detached runnable until a worker handles it.
+    #[must_use]
+    #[inline]
     pub(crate) const fn new(task: T) -> Self {
         Self {
             task,
