@@ -8,7 +8,7 @@
 
 ## 概念模型
 
-`RayonExecutorServiceBuilder` 创建独立的 Rayon 池，`RayonExecutorService` 通过 `ExecutorService` 接受任务。每项已接纳任务都处于排队、运行或取消中之一，三种状态都会占用 `task_capacity`；默认容量为 1024。无需结果的 runnable 使用 `submit`；只关心结果时使用 `submit_callable`；需要状态或尽力取消尚未开始的任务时使用 tracked 提交方法。
+`RayonExecutorServiceBuilder` 创建独立的 Rayon 池，`RayonExecutorService` 通过 `ExecutorService` 接受任务。每项已接纳任务都处于排队、运行或取消中之一，三种状态都会占用 `task_capacity`；默认容量为 1024。无需结果的 runnable 使用 `submit`；只关心结果时使用 `submit_callable`；需要状态或尽力取消尚未开始的任务时使用 tracked 提交方法。detached 提交只提供接纳状态；最终任务结果的去向见[错误与诊断](#错误与诊断)。
 
 ```text
 调用方 -> 已接纳任务的容量上限 -> Rayon 池 -> 任务句柄
@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `SubmissionError::Shutdown` | 服务已不再接纳任务；新任务只能提交给仍在运行的服务。 |
 | `TaskExecutionError::Cancelled` | 队列中的 tracked 任务已取消；仅在业务仍需要时重新提交。 |
 
-任务自身失败或 panic 会通过 `get` 或 `.await` 返回，不能把提交成功当作计算成功。
+对于返回结果句柄的提交，任务失败或 panic 通过 `get` 或 `.await` 观察。detached `submit` 只返回接纳状态，并丢弃任务最终结果。调用方需要观察失败时，请改用 callable 提交，或由 detached 任务自行报告错误。
 
 ## 排障
 

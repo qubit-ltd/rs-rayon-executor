@@ -16,7 +16,9 @@ use a thread-pool or Tokio executor for those workloads.
 task is queued, running, or being cancelled; all three states consume
 `task_capacity`, whose default is 1024. Use `submit` for detached runnables,
 `submit_callable` for a result, and tracked submissions for status or
-best-effort cancellation before work starts.
+best-effort cancellation before work starts. Detached submissions expose only
+admission status; see [Errors and Diagnostics](#errors-and-diagnostics) for
+where their final task result goes.
 
 ```text
 caller -> bounded accepted-task capacity -> Rayon pool -> task handle
@@ -229,8 +231,11 @@ and cancelled tasks, but it cannot forcibly interrupt a running Rayon task.
 | `SubmissionError::Shutdown` | The service no longer admits tasks; submit new work only to a running service. |
 | `TaskExecutionError::Cancelled` | A queued tracked task was cancelled; resubmit only if the application still needs it. |
 
-Task failures and panics appear through `get` or `.await`, rather than through
-successful submission.
+For submissions that return a result handle, task failures and panics are
+observed through `get` or `.await`. Detached `submit` returns only admission
+status and discards the final task result. Use a callable submission when the
+caller needs to observe failure, or report failures from the detached task
+itself.
 
 ## Troubleshooting
 
