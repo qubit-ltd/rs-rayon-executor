@@ -134,7 +134,9 @@ impl RayonExecutorServiceBuilder {
             builder = builder.stack_size(stack_size);
         }
         let pool = std::sync::Arc::new(builder.build()?);
-        let state = RayonExecutorServiceState::new(self.task_capacity, self.num_threads);
+        // rayon-core 1.13.0 caps requests at max_num_threads(), so initialize
+        // dispatch reservations from the registry's actual worker count.
+        let state = RayonExecutorServiceState::new(self.task_capacity, pool.current_num_threads());
         Ok(RayonExecutorService { pool, state })
     }
 }
