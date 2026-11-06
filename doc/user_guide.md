@@ -237,6 +237,11 @@ status and discards the final task result. Use a callable submission when the
 caller needs to observe failure, or report failures from the detached task
 itself.
 
+Panic conversion applies to catchable unwinding panics. It cannot recover from
+`panic=abort`, a second panic during unwinding, or a destructor that never
+returns. Such cases may abort the process or prevent task cleanup and service
+termination from completing.
+
 ## Troubleshooting
 
 Capacity includes queued, running, and cancellation-in-progress tasks, not just
