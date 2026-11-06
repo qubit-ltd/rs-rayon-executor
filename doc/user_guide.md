@@ -84,8 +84,9 @@ retain the task.
 ## Async shutdown and capacity waits
 
 Async waiting is optional. Enable the crate feature to use
-`await_termination` and `capacity_changes`; a Tokio runtime is needed to run
-the async example:
+`await_termination` and `capacity_changes`. The wait can be driven by any Rust
+future executor; it does not require a Tokio runtime. The example below uses
+Tokio APIs and therefore requires a Tokio runtime:
 
 ```toml
 [dependencies]

@@ -149,14 +149,11 @@ async fn test_multiple_capacity_waiters_retry_until_accepted() {
             assert_eq!(count.load(Ordering::SeqCst), 1, "task ID {id}");
         }
         service.shutdown();
-        assert_eq!(
-            (
-                service.stats().queued,
-                service.stats().running,
-                service.stats().cancelling
-            ),
-            (0, 0, 0)
-        );
+        tokio::time::timeout(DEADLINE, service.await_termination())
+            .await
+            .expect("service should terminate before the final snapshot");
+        let stats = service.stats();
+        assert_eq!((stats.queued, stats.running, stats.cancelling), (0, 0, 0));
     })
     .await
     .expect("completion waiter scenario should finish within deadline");

@@ -197,7 +197,9 @@ where
     fn cancel(&self) -> CancelResult {
         match self.state.cancel_pending_task(self.task_id) {
             CancelDisposition::Owned(job) => {
-                let _ = catch_unwind(AssertUnwindSafe(|| job.cancel()));
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
+                    crate::internal::discard_panic_payload(payload);
+                }
                 self.state.finish_cancelling(self.task_id);
                 CancelResult::Cancelled
             }

@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 异步关闭与容量等待
 
-异步等待是可选功能。启用 crate 的 `async-wait` feature 后，可使用 `await_termination` 和 `capacity_changes`；运行下面的异步示例需要 Tokio runtime：
+异步等待是可选功能。启用 crate 的 `async-wait` feature 后，可使用 `await_termination` 和 `capacity_changes`。等待 future 可由任何 Rust future executor 驱动，不要求 Tokio runtime。下面的示例使用 Tokio API，因此需要 Tokio runtime：
 
 ```toml
 [dependencies]

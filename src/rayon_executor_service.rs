@@ -72,7 +72,8 @@ impl RayonExecutorService {
     /// is not forcibly interrupted, so termination still depends on accepted
     /// running tasks finishing.
     ///
-    /// Requires the `async-wait` feature and a running Tokio runtime.
+    /// Requires the `async-wait` feature. The wait can be driven by any Rust
+    /// future executor; it does not require a Tokio runtime.
     #[cfg(feature = "async-wait")]
     pub async fn await_termination(&self) {
         let mut receiver = self.state.subscribe_termination();
@@ -362,7 +363,9 @@ impl ExecutorService for RayonExecutorService {
     fn stop(&self) -> StopReport {
         let (report, jobs) = self.state.stop();
         for (task_id, job) in jobs {
-            let _ = catch_unwind(AssertUnwindSafe(|| job.cancel()));
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
+                crate::internal::discard_panic_payload(payload);
+            }
             self.state.finish_cancelling(task_id);
         }
         report

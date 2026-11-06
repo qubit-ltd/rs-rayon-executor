@@ -17,7 +17,8 @@
 //! The optional `async-wait` feature is disabled by default. Enable it to use
 //! the `RayonExecutorService::await_termination` and
 //! `RayonExecutorService::capacity_changes` methods. Both require the
-//! `async-wait` feature; a Tokio runtime is needed to run the async wait.
+//! `async-wait` feature. The wait can be driven by any Rust future executor;
+//! it does not require a Tokio runtime.
 //!
 //! # Examples
 //!
