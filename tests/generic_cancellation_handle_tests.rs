@@ -18,6 +18,7 @@ use qubit_executor::CancellableTaskHandle;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::TaskResult;
 use qubit_executor::service::ExecutorService;
+use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
 
 struct DropProbe(Arc<AtomicUsize>);
@@ -30,8 +31,7 @@ impl Drop for DropProbe {
 
 async fn cancel_after_timeout<H>(task: H) -> TaskResult<usize, io::Error>
 where
-    H: CancellableTaskHandle<usize, io::Error>
-        + std::future::IntoFuture<Output = TaskResult<usize, io::Error>>,
+    H: CancellableTaskHandle<usize, io::Error> + std::future::IntoFuture<Output = TaskResult<usize, io::Error>>,
 {
     let cancellation = CancellableTaskHandle::cancellation_handle(&task);
     let mut result = Box::pin(task.into_future());
@@ -47,7 +47,7 @@ where
 }
 
 #[test]
-fn generic_cancellation_handle_preserves_rayon_job_cleanup_and_capacity() {
+fn test_generic_cancellation_handle_preserves_rayon_job_cleanup_and_capacity() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .task_capacity(2)
@@ -68,6 +68,10 @@ fn generic_cancellation_handle_preserves_rayon_job_cleanup_and_capacity() {
             }
         })
         .expect("queued task should be accepted");
+    assert!(matches!(
+        service.submit_callable(|| Ok::<usize, io::Error>(0)),
+        Err(SubmissionError::Saturated)
+    ));
 
     let cancelled = common::helpers::create_runtime().block_on(cancel_after_timeout(queued));
     assert!(matches!(cancelled, Err(TaskExecutionError::Cancelled)));
