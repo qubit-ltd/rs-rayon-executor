@@ -5,10 +5,11 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Tests for [`qubit_rayon_executor::RayonTaskHandle`].
+//! Tests for [`qubit_rayon_executor::RayonTaskHandle].
 
 mod common;
 
+use std::future::IntoFuture;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -259,6 +260,64 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
         running.get().expect("running task should complete normally");
         for ((handle, executions), cancel_result) in queued_handles.into_iter().zip(cancel_results) {
             let result = handle.get();
+            match cancel_result {
+                CancelResult::Cancelled => {
+                    assert!(matches!(result, Err(TaskExecutionError::Cancelled)));
+                    assert_eq!(executions.load(Ordering::SeqCst), 0);
+                }
+                CancelResult::AlreadyRunning | CancelResult::AlreadyFinished => {
+                    assert!(result.is_ok());
+                    assert_eq!(executions.load(Ordering::SeqCst), 1);
+                }
+                other => panic!("unexpected cancellation result: {other:?}"),
+            }
+        }
+        let stats = service.stats();
+        assert_eq!(stats.queued, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.cancelling, 0);
+    }
+}
+
+#[test]
+fn test_rayon_cancellation_endpoint_during_start_race_matches_task_result() {
+    const QUEUED_TASKS: usize = 64;
+    const ATTEMPTS: usize = 64;
+
+    for _ in 0..ATTEMPTS {
+        let service = create_single_worker_service();
+        let (running, release_tx) = submit_blocking_task(&service);
+
+        let queued_tasks = (0..QUEUED_TASKS)
+            .map(|_| {
+                let executions = Arc::new(AtomicUsize::new(0));
+                let task_executions = Arc::clone(&executions);
+                let handle = service
+                    .submit_tracked(move || {
+                        task_executions.fetch_add(1, Ordering::SeqCst);
+                        Ok::<(), io::Error>(())
+                    })
+                    .expect("queued task should be accepted");
+                let cancellation = handle.cancellation_handle();
+                (cancellation, handle.into_future(), executions)
+            })
+            .collect::<Vec<_>>();
+
+        release_tx.send(()).expect("running task should receive release signal");
+        let cancel_results = queued_tasks
+            .iter()
+            .map(|(cancellation, _, _)| cancellation.cancel())
+            .collect::<Vec<_>>();
+
+        service.shutdown();
+        assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+        running.get().expect("running task should complete normally");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+        for ((_, result_future, executions), cancel_result) in queued_tasks.into_iter().zip(cancel_results) {
+            let result = runtime.block_on(result_future);
             match cancel_result {
                 CancelResult::Cancelled => {
                     assert!(matches!(result, Err(TaskExecutionError::Cancelled)));

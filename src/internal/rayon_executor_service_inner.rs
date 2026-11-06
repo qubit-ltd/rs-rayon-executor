@@ -24,6 +24,8 @@ pub(crate) struct RayonExecutorServiceInner {
     pub(crate) next_task_id: usize,
     /// Number of jobs currently running user code.
     pub(crate) running: usize,
+    /// Identifiers of jobs currently owned by Rayon workers.
+    pub(crate) running_tasks: BTreeSet<usize>,
     /// Number of Rayon closures currently scheduled for queued work.
     pub(crate) scheduled: usize,
     /// Pending jobs indexed by their stable task identifiers.

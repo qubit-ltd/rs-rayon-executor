@@ -61,6 +61,7 @@ impl RayonExecutorServiceState {
                 num_threads,
                 next_task_id: 0,
                 running: 0,
+                running_tasks: BTreeSet::new(),
                 scheduled: 0,
                 queue: BTreeMap::new(),
                 cancelling: BTreeSet::new(),
@@ -183,26 +184,45 @@ impl RayonExecutorServiceState {
     ///
     /// The oldest queued job, or `None` when a previously scheduled closure
     /// finds no work and releases its scheduling reservation.
-    pub(crate) fn take_next(&self) -> Option<Box<dyn QueuedJob>> {
+    pub(crate) fn take_next(&self) -> Option<(usize, Box<dyn QueuedJob>)> {
         let mut inner = self.inner.lock();
-        let Some((_, job)) = inner.queue.pop_first() else {
+        let Some((task_id, job)) = inner.queue.pop_first() else {
             inner.scheduled = inner.scheduled.saturating_sub(1);
             self.notify_if_terminated_locked(&inner);
             return None;
         };
         inner.running += 1;
-        Some(job)
+        inner.running_tasks.insert(task_id);
+        Some((task_id, job))
+    }
+
+    /// Returns whether a worker currently owns the specified task.
+    ///
+    /// # Parameters
+    ///
+    /// * `task_id` - Identifier of the task to inspect.
+    ///
+    /// # Returns
+    ///
+    /// `true` while a worker owns the task, and `false` otherwise.
+    pub(crate) fn is_running_task(&self, task_id: usize) -> bool {
+        self.inner.lock().running_tasks.contains(&task_id)
     }
 
     /// Finishes one running task and returns whether a successor closure is
     /// needed.
     ///
+    /// # Parameters
+    ///
+    /// * `task_id` - Identifier of the task whose worker ownership is released.
+    ///
     /// # Returns
     ///
     /// `true` when queued work needs the same worker reservation to run next.
     #[must_use]
-    pub(crate) fn finish_running(&self) -> bool {
+    pub(crate) fn finish_running(&self, task_id: usize) -> bool {
         let mut inner = self.inner.lock();
+        inner.running_tasks.remove(&task_id);
         inner.running = inner.running.saturating_sub(1);
         let dispatch = !inner.queue.is_empty();
         if !dispatch {

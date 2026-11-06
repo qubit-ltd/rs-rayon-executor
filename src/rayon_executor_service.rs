@@ -236,13 +236,13 @@ impl RayonExecutorService {
 /// * `pool` - Rayon pool used to schedule the next queued job.
 /// * `state` - Shared state tracking accepted work and lifecycle counters.
 fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
-    let Some(job) = state.take_next() else {
+    let Some((task_id, job)) = state.take_next() else {
         return;
     };
     if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.run())) {
         discard_panic_payload(payload);
     }
-    if state.finish_running() {
+    if state.finish_running(task_id) {
         let next_pool = Arc::clone(&pool);
         pool.spawn_fifo(move || run_one(next_pool, state));
     }

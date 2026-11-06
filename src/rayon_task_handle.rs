@@ -132,9 +132,8 @@ impl<R, E> RayonTaskHandle<R, E> {
         R: Send,
         E: Send,
     {
-        cancel_task(&self.state, self.task_id, || match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
-            _ => CancelResult::AlreadyFinished,
+        cancel_task(&self.state, self.task_id, || {
+            cancellation_result_for_status(self.status())
         })
     }
 
@@ -154,7 +153,15 @@ impl<R, E> RayonTaskHandle<R, E> {
         let state = Arc::clone(&self.state);
         let task_id = self.task_id;
         let task = self.inner.cancellation_handle();
-        TaskCancellationHandle::new(move || cancel_task(&state, task_id, || task.cancel()))
+        TaskCancellationHandle::new(move || {
+            cancel_task(&state, task_id, || {
+                if state.is_running_task(task_id) {
+                    CancelResult::AlreadyRunning
+                } else {
+                    task.cancel()
+                }
+            })
+        })
     }
 
     /// Returns whether the task has reported completion.
@@ -226,10 +233,27 @@ where
     /// Cancels the task through the owning service state.
     #[inline]
     fn cancel(&self) -> CancelResult {
-        cancel_task(&self.state, self.task_id, || match self.status() {
-            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
-            _ => CancelResult::AlreadyFinished,
+        cancel_task(&self.state, self.task_id, || {
+            cancellation_result_for_status(self.status())
         })
+    }
+}
+
+/// Maps a task status to the outcome used when the service no longer owns a
+/// queued job.
+///
+/// # Parameters
+///
+/// * `status` - Current status observed from the tracked task.
+///
+/// # Returns
+///
+/// `AlreadyRunning` for pending or running tasks, and `AlreadyFinished` for
+/// terminal tasks.
+fn cancellation_result_for_status(status: TaskStatus) -> CancelResult {
+    match status {
+        TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
+        _ => CancelResult::AlreadyFinished,
     }
 }
 
@@ -275,5 +299,52 @@ impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
     #[inline]
     fn into_future(self) -> Self::IntoFuture {
         self.inner.into_future()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+
+    use qubit_executor::CancelResult;
+    use qubit_executor::TaskStatus;
+    use qubit_executor::task::spi::TaskEndpointPair;
+
+    use crate::internal::CallableJob;
+    use crate::rayon_executor_service_state::RayonExecutorServiceState;
+    use crate::rayon_task_handle::RayonTaskHandle;
+
+    #[test]
+    fn test_cancellation_endpoint_cannot_cancel_after_worker_takes_job_before_start() {
+        let state = RayonExecutorServiceState::new(1, 1);
+        let (tracked, slot) = TaskEndpointPair::<usize, Infallible>::new().into_tracked_parts();
+        let ran = Arc::new(AtomicBool::new(false));
+        let callable_ran = Arc::clone(&ran);
+        let job = CallableJob::new(
+            move || {
+                callable_ran.store(true, Ordering::SeqCst);
+                Ok(42)
+            },
+            slot,
+        );
+        let admission = state.admit(Box::new(job)).expect("task should be admitted");
+        let handle = RayonTaskHandle::new(tracked, admission.task_id, Arc::clone(&state));
+        let cancellation = handle.cancellation_handle();
+        let (task_id, job) = state.take_next().expect("worker should take admitted task");
+
+        assert_eq!(handle.status(), TaskStatus::Pending);
+        assert_eq!(cancellation.cancel(), CancelResult::AlreadyRunning);
+        job.run();
+        assert!(!state.finish_running(task_id));
+
+        assert!(ran.load(Ordering::SeqCst));
+        assert_eq!(handle.status(), TaskStatus::Succeeded);
+        assert_eq!(cancellation.cancel(), CancelResult::AlreadyFinished);
+        assert_eq!(state.stats().queued, 0);
+        assert_eq!(state.stats().running, 0);
+        assert_eq!(state.stats().cancelling, 0);
     }
 }
