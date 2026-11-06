@@ -74,7 +74,25 @@ qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 ```
 
-在 async 代码中，调用 `shutdown` 或 `stop` 后优先使用 `await_termination`。同步的 `wait_termination` 会阻塞调用线程，不应在 Tokio runtime worker 上执行。
+在 async 代码中，调用 `shutdown` 或 `stop` 后优先使用 `await_termination`。同步的 `wait_termination` 会阻塞调用线程，不应在 Tokio runtime worker 上执行。这只表示终止等待本身不会阻塞线程：`stop` 以及成功取消队列任务的 `cancel` 会在调用线程同步析构捕获值，耗时取决于用户清理逻辑。即使取消结果已经可见，这些任务在清理完成前仍计入 `cancelling`。不要让清理代码同步等待依赖该清理完成的终止条件。
+
+如果 `stop` 的清理可能耗时，请将它放入 `spawn_blocking`，再异步等待终止：
+
+```rust
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn stop_without_blocking_runtime(
+    service: &RayonExecutorService,
+) -> Result<(), tokio::task::JoinError> {
+    let stopping = service.clone();
+    let _report = tokio::task::spawn_blocking(move || stopping.stop()).await?;
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+此示例需要启用 `async-wait` feature 并运行 Tokio runtime（上面的依赖配置已启用 Tokio 的 `rt-multi-thread`）。`?` 会传播 blocking task 在启动前被取消或发生 panic 时的 `JoinError`。丢弃 join future 不会强制终止已经开始运行的 blocking closure。`stop` 仍不会中断正在运行的 CPU 任务；如果任务不返回，终止等待也可能一直持续。
 
 处理背压时，请先订阅，再提交。收到 `Saturated` 后等待变化并使用新 callable 重试。通知只是提示：其他生产者可能先占用容量，而且 API 不保证 FIFO、公平性或有限等待。应将 `Shutdown` 和通知通道关闭视为终止结果：
 

@@ -35,6 +35,9 @@ doctest = true
 default = []
 async-wait = ["dep:tokio"]
 
+[package.metadata.docs.rs]
+features = ["async-wait"]
+
 [dependencies]
 rayon = "^1.12"
 thiserror = "^2.0"

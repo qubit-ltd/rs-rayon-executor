@@ -106,6 +106,13 @@ impl<R, E> RayonTaskHandle<R, E> {
 
     /// Attempts to cancel the task before any Rayon worker starts it.
     ///
+    /// If this call claims the queued task, its cleanup, including captured
+    /// values' destructors, runs synchronously on this caller's thread and can
+    /// take as long as that cleanup takes. The task remains counted as
+    /// cancelling until cleanup finishes, even if its cancellation result is
+    /// already observable. Do not synchronously wait here for termination
+    /// that depends on this cleanup completing.
+    ///
     /// # Returns
     ///
     /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a

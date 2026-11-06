@@ -96,7 +96,36 @@ tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 
 In async code, prefer `await_termination` after `shutdown` or `stop`. The
 synchronous `wait_termination` blocks its caller and should not run on a Tokio
-runtime worker.
+runtime worker. This only makes the termination wait non-blocking: `stop` and
+a successful queued-task `cancel` run captured-value destructors synchronously
+on their caller's thread, and their duration depends on user cleanup. Such work
+remains counted as `cancelling` until cleanup finishes, even if the cancellation
+result is already available. Do not let cleanup synchronously wait for
+termination that depends on that same cleanup.
+
+To keep potentially slow `stop` cleanup off a Tokio worker, run it in
+`spawn_blocking`, then await termination:
+
+```rust
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn stop_without_blocking_runtime(
+    service: &RayonExecutorService,
+) -> Result<(), tokio::task::JoinError> {
+    let stopping = service.clone();
+    let _report = tokio::task::spawn_blocking(move || stopping.stop()).await?;
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+This example requires the `async-wait` feature and a running Tokio runtime
+(the dependency configuration above enables Tokio's `rt-multi-thread`). The
+`?` propagates a `JoinError` if the blocking task panics or is cancelled before
+starting. Dropping the join future does not forcibly terminate a blocking
+closure that has already started. `stop` still cannot interrupt running CPU
+tasks; if one does not return, the termination wait can continue indefinitely.
 
 For backpressure, subscribe before submitting. After `Saturated`, wait for a
 change and retry with a new callable. Notifications are hints: another

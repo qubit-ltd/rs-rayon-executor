@@ -12,6 +12,13 @@
 //! work, and use [`RayonTaskHandle`] when task status or cancellation is
 //! required.
 //!
+//! # Features
+//!
+//! The optional `async-wait` feature is disabled by default. Enable it to use
+//! the `RayonExecutorService::await_termination` and
+//! `RayonExecutorService::capacity_changes` methods. Both require the
+//! `async-wait` feature; a Tokio runtime is needed to run the async wait.
+//!
 //! # Examples
 //!
 //! ```

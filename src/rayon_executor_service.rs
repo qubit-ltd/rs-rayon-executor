@@ -35,7 +35,13 @@ use crate::rayon_task_handle::RayonTaskHandle;
 ///
 /// The service owns a dedicated Rayon pool. Accepted tasks are bounded by the
 /// configured capacity; shutdown allows queued work to finish, while stop
-/// cancels work that has not started.
+/// cancels work that has not started. Cancelling queued work runs its cleanup
+/// (including captured values' destructors) synchronously on the thread that
+/// calls `stop`; that cleanup can take as long as user-defined destructors
+/// take. Such cleanup remains counted as cancelling until it finishes, even
+/// if the task's cancellation result is already observable. Running CPU work
+/// is not forcibly interrupted. Cleanup must not synchronously wait for a
+/// termination condition that depends on that same cleanup finishing.
 ///
 /// # Examples
 ///
@@ -58,8 +64,15 @@ pub struct RayonExecutorService {
 impl RayonExecutorService {
     /// Waits asynchronously for shutdown or stop and all accepted work.
     ///
-    /// The wait occupies no Rayon or Tokio blocking thread. Dropping this
-    /// future cancels only the wait and leaves the service lifecycle intact.
+    /// The wait itself occupies no Rayon or Tokio blocking thread. It does not
+    /// make a preceding synchronous `stop` or task cancellation non-blocking:
+    /// queued task cleanup, including captured values' destructors, runs on
+    /// the thread that performs that operation. Dropping this future cancels
+    /// only the wait and leaves the service lifecycle intact. Running CPU work
+    /// is not forcibly interrupted, so termination still depends on accepted
+    /// running tasks finishing.
+    ///
+    /// Requires the `async-wait` feature and a running Tokio runtime.
     #[cfg(feature = "async-wait")]
     pub async fn await_termination(&self) {
         let mut receiver = self.state.subscribe_termination();
@@ -103,6 +116,8 @@ impl RayonExecutorService {
     /// Subscribe before the first submission attempt so a capacity change
     /// between a saturated attempt and waiting cannot be missed. A closed
     /// receiver means the service state has been dropped.
+    ///
+    /// Requires the `async-wait` feature.
     ///
     /// # Returns
     ///
@@ -334,8 +349,16 @@ impl ExecutorService for RayonExecutorService {
 
     /// Stops accepting tasks and cancels queued tasks.
     ///
-    /// Running CPU work is not forcibly interrupted. The returned report
-    /// distinguishes running, queued, and cancelled tasks.
+    /// Queued task cleanup, including captured values' destructors, runs
+    /// synchronously on this caller's thread. Its duration depends on that
+    /// cleanup and is not bounded by this method. During cleanup, tasks remain
+    /// counted as cancelling until their cleanup finishes; a cancellation
+    /// result becoming visible does not itself release capacity. Running CPU
+    /// work is not forcibly interrupted. The returned report distinguishes
+    /// running, queued, and cancelled tasks.
+    ///
+    /// Avoid calling this from cleanup code that synchronously waits for
+    /// termination, since that can wait on the cleanup currently in progress.
     fn stop(&self) -> StopReport {
         let (report, jobs) = self.state.stop();
         for (task_id, job) in jobs {
