@@ -43,6 +43,11 @@ use crate::rayon_task_handle::RayonTaskHandle;
 /// if the task's cancellation result is already observable. Running CPU work
 /// is not forcibly interrupted. Cleanup must not synchronously wait for a
 /// termination condition that depends on that same cleanup finishing.
+/// Blocking on a result handle for queued work from this same pool can
+/// deadlock when all workers are occupied by waiters. A running task must
+/// also not synchronously wait for its own service to terminate: termination
+/// includes that task finishing. Coordinate results and shutdown outside the
+/// pool, or use Rayon `join` or `scope` for suitable computations.
 ///
 /// # Examples
 ///
@@ -396,11 +401,20 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Calling this before shutdown or stop blocks until a lifecycle transition
     /// is requested and all accepted work subsequently finishes or cancels.
+    ///
+    /// Do not call this from an accepted task running on this service.
+    /// Termination includes that task finishing, so waiting here creates a
+    /// circular dependency even after shutdown has been requested.
     fn wait_termination(&self) {
         self.state.wait_for_termination();
     }
 
     /// Waits at most `timeout` for all accepted tasks to terminate.
+    ///
+    /// Calling this from a task running on this service cannot observe normal
+    /// termination before that task finishes. It can block the worker until
+    /// the timeout expires and return `false`; coordinate termination outside
+    /// the pool instead.
     ///
     /// # Parameters
     ///

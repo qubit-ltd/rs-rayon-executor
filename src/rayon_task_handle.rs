@@ -72,6 +72,14 @@ impl<R, E> RayonTaskHandle<R, E> {
 
     /// Blocks until the task finishes and returns its final result.
     ///
+    /// # Blocking and Deadlocks
+    ///
+    /// Do not block a worker on a queued task from the same pool when no
+    /// worker remains available to execute that task. For example, submitting
+    /// a child task and calling `get` from the only worker deadlocks. Wait
+    /// outside the pool, or decompose the computation with Rayon `join` or
+    /// `scope` as appropriate.
+    ///
     /// # Returns
     ///
     /// The final task result reported through the underlying tracked task.
