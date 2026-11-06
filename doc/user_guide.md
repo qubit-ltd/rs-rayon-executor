@@ -193,6 +193,14 @@ Tracked handles support status and cancellation. Cancellation succeeds only
 while a task is queued; a running task reports `AlreadyRunning`, and a completed
 task reports `AlreadyFinished`.
 
+If the result handle will be consumed into a future, first call
+`RayonTaskHandle::cancellation_handle()` and retain the returned
+`TaskCancellationHandle`. Its clones use the same Rayon queue cleanup and
+capacity accounting path; dropping the endpoint does not cancel. Cancellation
+is best-effort and cannot interrupt running work. Cleanup of captured values
+for a cancelled queued task runs synchronously on the thread that wins
+cancellation.
+
 ```rust
 use std::io;
 use std::sync::mpsc;

@@ -11,6 +11,7 @@ use std::panic::catch_unwind;
 use std::sync::Arc;
 
 use qubit_executor::CancelResult;
+use qubit_executor::TaskCancellationHandle;
 use qubit_executor::TaskResult;
 use qubit_executor::TaskStatus;
 use qubit_executor::TrackedTask;
@@ -131,7 +132,29 @@ impl<R, E> RayonTaskHandle<R, E> {
         R: Send,
         E: Send,
     {
-        <Self as TrackedTaskHandle<R, E>>::cancel(self)
+        cancel_task(&self.state, self.task_id, || match self.status() {
+            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
+            _ => CancelResult::AlreadyFinished,
+        })
+    }
+
+    /// Creates an independent endpoint that can cancel this task after this
+    /// result handle is consumed into a future.
+    ///
+    /// Cloning or dropping the endpoint does not cancel the task. Cancellation
+    /// remains best-effort and can only claim work before a Rayon worker starts
+    /// it. If this endpoint claims queued work, captured-value cleanup runs
+    /// synchronously on the calling thread.
+    #[must_use]
+    pub fn cancellation_handle(&self) -> TaskCancellationHandle
+    where
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let state = Arc::clone(&self.state);
+        let task_id = self.task_id;
+        let task = self.inner.cancellation_handle();
+        TaskCancellationHandle::new(move || cancel_task(&state, task_id, || task.cancel()))
     }
 
     /// Returns whether the task has reported completion.
@@ -203,20 +226,28 @@ where
     /// Cancels the task through the owning service state.
     #[inline]
     fn cancel(&self) -> CancelResult {
-        match self.state.cancel_pending_task(self.task_id) {
-            CancelDisposition::Owned(job) => {
-                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
-                    crate::internal::discard_panic_payload(payload);
-                }
-                self.state.finish_cancelling(self.task_id);
-                CancelResult::Cancelled
+        cancel_task(&self.state, self.task_id, || match self.status() {
+            TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
+            _ => CancelResult::AlreadyFinished,
+        })
+    }
+}
+
+/// Applies the complete Rayon queued-job cancellation path.
+fn cancel_task<F>(state: &RayonExecutorServiceState, task_id: usize, absent: F) -> CancelResult
+where
+    F: FnOnce() -> CancelResult,
+{
+    match state.cancel_pending_task(task_id) {
+        CancelDisposition::Owned(job) => {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
+                crate::internal::discard_panic_payload(payload);
             }
-            CancelDisposition::InProgress => CancelResult::Cancelled,
-            CancelDisposition::Absent => match self.status() {
-                TaskStatus::Pending | TaskStatus::Running => CancelResult::AlreadyRunning,
-                _ => CancelResult::AlreadyFinished,
-            },
+            state.finish_cancelling(task_id);
+            CancelResult::Cancelled
         }
+        CancelDisposition::InProgress => CancelResult::Cancelled,
+        CancelDisposition::Absent => absent(),
     }
 }
 

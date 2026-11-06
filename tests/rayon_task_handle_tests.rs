@@ -18,6 +18,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use qubit_executor::CancelResult;
+use qubit_executor::TaskCancellationHandle;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::TaskStatus;
 use qubit_executor::TryGet;
@@ -30,6 +31,114 @@ use crate::common::helpers::create_single_worker_service;
 use crate::common::helpers::ok_usize_task;
 use crate::common::helpers::submit_blocking_task;
 use crate::common::helpers::wait_until;
+
+#[test]
+fn test_rayon_cancellation_handle_cancels_after_handle_into_future() {
+    let service = create_single_worker_service();
+    let (first, release_tx) = submit_blocking_task(&service);
+    let queued = service
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("queued task should be accepted");
+    let cancellation: TaskCancellationHandle = queued.cancellation_handle();
+    let result_future = queued.into_future();
+
+    assert_eq!(cancellation.cancel(), CancelResult::Cancelled);
+    let result = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime should build")
+        .block_on(result_future);
+    assert!(matches!(result, Err(TaskExecutionError::Cancelled)));
+
+    release_tx
+        .send(())
+        .expect("running task should be released");
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    first.get().expect("running task should complete");
+}
+
+#[test]
+fn test_rayon_cancellation_handle_clone_and_drop_behavior() {
+    let service = create_single_worker_service();
+    let (first, release_tx) = submit_blocking_task(&service);
+    let queued = service
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("queued task should be accepted");
+    let endpoint = queued.cancellation_handle();
+    drop(endpoint.clone());
+    drop(endpoint);
+    assert_eq!(queued.status(), TaskStatus::Pending);
+
+    let endpoint = queued.cancellation_handle();
+    assert_eq!(endpoint.clone().cancel(), CancelResult::Cancelled);
+    assert_eq!(endpoint.cancel(), CancelResult::AlreadyFinished);
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+
+    release_tx
+        .send(())
+        .expect("running task should be released");
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    first.get().expect("running task should complete");
+}
+
+#[test]
+fn test_rayon_cancellation_handle_cannot_cancel_running_task() {
+    let service = create_single_worker_service();
+    let (running, release_tx) = submit_blocking_task(&service);
+    let endpoint = running.cancellation_handle();
+    assert_eq!(endpoint.cancel(), CancelResult::AlreadyRunning);
+    release_tx
+        .send(())
+        .expect("running task should be released");
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    running.get().expect("running task should complete");
+}
+
+#[test]
+fn test_rayon_cancellation_handle_clones_can_cancel_concurrently() {
+    let service = create_single_worker_service();
+    let (first, release_tx) = submit_blocking_task(&service);
+    let queued = service
+        .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
+        .expect("queued task should be accepted");
+    let endpoint = queued.cancellation_handle();
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let cancel_threads: Vec<_> = (0..2)
+        .map(|_| {
+            let endpoint = endpoint.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                endpoint.cancel()
+            })
+        })
+        .collect();
+    barrier.wait();
+    let results: Vec<_> = cancel_threads
+        .into_iter()
+        .map(|thread| thread.join().expect("cancel thread should not panic"))
+        .collect();
+    assert!(
+        results
+            .iter()
+            .any(|result| *result == CancelResult::Cancelled)
+    );
+    assert!(results.iter().all(|result| matches!(
+        result,
+        CancelResult::Cancelled | CancelResult::AlreadyFinished
+    )));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+
+    release_tx
+        .send(())
+        .expect("running task should be released");
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    first.get().expect("running task should complete");
+}
 
 #[tokio::test]
 async fn test_rayon_task_handle_can_be_awaited() {

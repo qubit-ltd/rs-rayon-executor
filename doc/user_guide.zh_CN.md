@@ -146,6 +146,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 tracked 句柄支持查询状态和取消。任务仍在队列中时取消会成功；已运行的任务报告 `AlreadyRunning`，已完成的任务报告 `AlreadyFinished`。
 
+如果要将结果句柄转换为 future，请先调用
+`RayonTaskHandle::cancellation_handle()` 并保留返回的
+`TaskCancellationHandle`。克隆句柄会复用 Rayon 队列清理和容量记账路径；丢弃端点
+不会取消任务。取消仍是尽力而为，不能中断已运行的任务。成功取消队列任务时，
+捕获值的清理会在获胜调用所在的线程同步执行。
+
 ```rust
 use std::io;
 use std::sync::mpsc;

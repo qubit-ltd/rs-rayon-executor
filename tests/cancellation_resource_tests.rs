@@ -105,7 +105,8 @@ fn test_cancel_releases_queued_callable_capture_before_running_task_finishes() {
             }
         })
         .expect("queued task should be accepted");
-    assert_eq!(queued.cancel(), CancelResult::Cancelled);
+    let cancellation = queued.cancellation_handle();
+    assert_eq!(cancellation.cancel(), CancelResult::Cancelled);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     release_tx.send(()).expect("running task should release");
     service.shutdown();
@@ -164,12 +165,13 @@ fn test_cancel_keeps_capacity_until_capture_cleanup_finishes() {
             }
         })
         .expect("queued task should be accepted");
+    let cancellation = queued.cancellation_handle();
     #[cfg(feature = "async-wait")]
     let capacity_changes = service.capacity_changes();
 
     let (cancel_done_tx, cancel_done_rx) = mpsc::channel();
     let cancel_thread = std::thread::spawn(move || {
-        let result = queued.cancel();
+        let result = cancellation.cancel();
         let _ = cancel_done_tx.send(result);
     });
     wait_for_probe(entered_rx);
@@ -293,9 +295,10 @@ fn test_cancel_recovers_after_capture_destructor_panics() {
             }
         })
         .expect("queued task should be accepted");
+    let cancellation = queued.cancellation_handle();
     let (cancel_done_tx, cancel_done_rx) = mpsc::channel();
     let cancel_thread = std::thread::spawn(move || {
-        let result = queued.cancel();
+        let result = cancellation.cancel();
         let _ = cancel_done_tx.send(result);
     });
     wait_for_probe(entered_rx);
