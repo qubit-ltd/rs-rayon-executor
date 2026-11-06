@@ -88,7 +88,6 @@ impl RayonExecutorService {
     /// # Returns
     ///
     /// A builder initialized with CPU-parallelism defaults.
-    #[must_use]
     #[inline]
     pub fn builder() -> RayonExecutorServiceBuilder {
         RayonExecutorServiceBuilder::default()
