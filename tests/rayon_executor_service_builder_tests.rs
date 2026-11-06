@@ -5,7 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Tests for [`RayonExecutorServiceBuilder`](qubit_rayon_executor::service::RayonExecutorServiceBuilder).
+//! Tests for [`qubit_rayon_executor::RayonExecutorServiceBuilder].
 
 mod common;
 
