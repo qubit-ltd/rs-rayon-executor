@@ -77,7 +77,10 @@ async fn test_rayon_await_termination_survives_cancelled_waiter_and_stop() {
     let mut wait = Box::pin(service.await_termination());
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     drop(wait);
-    service.stop();
+    let report = service.stop();
+    assert_eq!(report.queued, 0);
+    assert_eq!(report.running, 0);
+    assert_eq!(report.cancelled, 0);
     timeout(Duration::from_secs(10), service.await_termination())
         .await
         .expect("new waiter should complete");

@@ -234,6 +234,20 @@ where
 }
 
 /// Applies the complete Rayon queued-job cancellation path.
+///
+/// # Type Parameters
+///
+/// * `F` - Fallback used when the queued job is no longer owned by the service.
+///
+/// # Parameters
+///
+/// * `state` - Service state that owns pending jobs and cancellation counters.
+/// * `task_id` - Identifier of the task whose queued job is cancelled.
+/// * `absent` - Fallback that reports the task's state when no job is queued.
+///
+/// # Returns
+///
+/// The observed cancellation outcome.
 fn cancel_task<F>(state: &RayonExecutorServiceState, task_id: usize, absent: F) -> CancelResult
 where
     F: FnOnce() -> CancelResult,

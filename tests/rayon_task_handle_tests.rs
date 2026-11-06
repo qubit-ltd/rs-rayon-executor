@@ -50,9 +50,7 @@ fn test_rayon_cancellation_handle_cancels_after_handle_into_future() {
         .block_on(result_future);
     assert!(matches!(result, Err(TaskExecutionError::Cancelled)));
 
-    release_tx
-        .send(())
-        .expect("running task should be released");
+    release_tx.send(()).expect("running task should be released");
     service.shutdown();
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     first.get().expect("running task should complete");
@@ -75,9 +73,7 @@ fn test_rayon_cancellation_handle_clone_and_drop_behavior() {
     assert_eq!(endpoint.cancel(), CancelResult::AlreadyFinished);
     assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
 
-    release_tx
-        .send(())
-        .expect("running task should be released");
+    release_tx.send(()).expect("running task should be released");
     service.shutdown();
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     first.get().expect("running task should complete");
@@ -89,9 +85,7 @@ fn test_rayon_cancellation_handle_cannot_cancel_running_task() {
     let (running, release_tx) = submit_blocking_task(&service);
     let endpoint = running.cancellation_handle();
     assert_eq!(endpoint.cancel(), CancelResult::AlreadyRunning);
-    release_tx
-        .send(())
-        .expect("running task should be released");
+    release_tx.send(()).expect("running task should be released");
     service.shutdown();
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     running.get().expect("running task should complete");
@@ -121,20 +115,15 @@ fn test_rayon_cancellation_handle_clones_can_cancel_concurrently() {
         .into_iter()
         .map(|thread| thread.join().expect("cancel thread should not panic"))
         .collect();
+    assert!(results.contains(&CancelResult::Cancelled));
     assert!(
         results
             .iter()
-            .any(|result| *result == CancelResult::Cancelled)
+            .all(|result| matches!(result, CancelResult::Cancelled | CancelResult::AlreadyFinished))
     );
-    assert!(results.iter().all(|result| matches!(
-        result,
-        CancelResult::Cancelled | CancelResult::AlreadyFinished
-    )));
     assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
 
-    release_tx
-        .send(())
-        .expect("running task should be released");
+    release_tx.send(()).expect("running task should be released");
     service.shutdown();
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     first.get().expect("running task should complete");

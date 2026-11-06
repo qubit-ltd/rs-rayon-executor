@@ -312,7 +312,10 @@ fn test_rayon_executor_service_stats_report_capacity_and_task_states() {
     assert_eq!(stats.cancelling, 0);
     assert_eq!(stats.lifecycle, ExecutorServiceLifecycle::Running);
 
-    service.stop();
+    let report = service.stop();
+    assert_eq!(report.queued, 1);
+    assert_eq!(report.running, 1);
+    assert_eq!(report.cancelled, 1);
     release_tx.send(()).expect("running task should be released");
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 }
@@ -394,7 +397,10 @@ async fn test_rayon_executor_service_queued_cancellation_publishes_capacity_chan
     service
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("cancelled queue slot should be reusable");
-    service.stop();
+    let report = service.stop();
+    assert_eq!(report.queued, 1);
+    assert_eq!(report.running, 1);
+    assert_eq!(report.cancelled, 1);
     release_tx.send(()).expect("running task should be released");
     tokio::time::timeout(Duration::from_secs(10), service.await_termination())
         .await

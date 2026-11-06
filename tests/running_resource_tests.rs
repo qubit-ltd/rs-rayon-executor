@@ -268,7 +268,9 @@ fn detached_panic_payload_cleanup_preserves_progress() {
     wait_signal(&started_rx, "detached panic task should start");
     release.release();
     submit_successor(&service, Arc::new(AtomicUsize::new(0)));
-    assert_eq!(secondary_drops.load(Ordering::SeqCst), 1);
+    // The shared executor now deliberately forgets a secondary panic payload
+    // after catching its destructor panic, so that payload cannot panic again.
+    assert_eq!(secondary_drops.load(Ordering::SeqCst), 0);
 }
 
 #[test]
