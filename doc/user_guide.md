@@ -138,6 +138,7 @@ terminal outcomes:
 
 ```rust
 use std::io;
+use std::sync::Arc;
 
 use qubit_executor::service::{ExecutorService, SubmissionError};
 use qubit_rayon_executor::RayonExecutorService;
@@ -146,9 +147,10 @@ async fn submit_after_capacity(
     service: &RayonExecutorService,
     values: Vec<usize>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let values: Arc<[usize]> = values.into();
     let mut changes = service.capacity_changes();
     let handle = loop {
-        let task_values = values.clone();
+        let task_values = Arc::clone(&values);
         match service.submit_callable(move || {
             Ok::<usize, io::Error>(task_values.iter().copied().sum())
         }) {
@@ -175,6 +177,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+The immutable input is shared through `Arc`, so retrying a rejected submission does not copy the whole array. Each attempt owns a shared reference while the retry loop retains the input.
 
 `stats()` returns a consistent snapshot sampled under the service state lock.
 Its `queued`, `running`, and `cancelling` counts all consume capacity.

@@ -98,6 +98,7 @@ async fn stop_without_blocking_runtime(
 
 ```rust
 use std::io;
+use std::sync::Arc;
 
 use qubit_executor::service::{ExecutorService, SubmissionError};
 use qubit_rayon_executor::RayonExecutorService;
@@ -106,9 +107,10 @@ async fn submit_after_capacity(
     service: &RayonExecutorService,
     values: Vec<usize>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let values: Arc<[usize]> = values.into();
     let mut changes = service.capacity_changes();
     let handle = loop {
-        let task_values = values.clone();
+        let task_values = Arc::clone(&values);
         match service.submit_callable(move || {
             Ok::<usize, io::Error>(task_values.iter().copied().sum())
         }) {
@@ -135,6 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+输入通过 `Arc` 共享，每次重试只克隆共享引用，不复制整个数组。即使提交被拒绝、此次闭包被销毁，重试循环仍持有输入。
 
 `stats()` 返回在服务状态锁内采样的一致快照。`queued`、`running` 和 `cancelling` 都会占用容量。任务从队列移除后，`cancelling` 仍会统计尚未完成的清理。结果可用与取消清理完成可能存在短暂时间差；观察或收取结果本身不会释放容量。
 
