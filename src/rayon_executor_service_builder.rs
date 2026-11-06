@@ -31,6 +31,7 @@ const DEFAULT_THREAD_NAME_PREFIX: &str = "qubit-rayon-executor";
 /// assert!(!service.is_terminated());
 /// # Ok::<(), qubit_rayon_executor::RayonExecutorServiceBuildError>(())
 /// ```
+#[must_use = "the builder must be configured or built to create an executor service"]
 #[derive(Clone)]
 pub struct RayonExecutorServiceBuilder {
     /// Number of Rayon worker threads to create.
