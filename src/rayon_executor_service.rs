@@ -100,6 +100,9 @@ impl RayonExecutorService {
     ///
     /// A notification is only a hint; callers must retry submission because
     /// another producer may consume the available capacity first.
+    /// Subscribe before the first submission attempt so a capacity change
+    /// between a saturated attempt and waiting cannot be missed. A closed
+    /// receiver means the service state has been dropped.
     ///
     /// # Returns
     ///
@@ -130,6 +133,21 @@ impl RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    /// * `H` - Handle returned for the callable.
+    /// * `F` - Endpoint conversion that creates the handle and result slot.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute.
+    /// * `split` - Converts a task endpoint pair into a handle and slot.
     fn submit_callable_with<C, R, E, H, F>(&self, task: C, split: F) -> Result<H, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -150,6 +168,17 @@ impl RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Runnable submitted for execution.
+    /// * `E` - Runnable error type.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Detached runnable to execute.
     fn submit_runnable<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -161,6 +190,10 @@ impl RayonExecutorService {
     }
 
     /// Schedules exactly `count` worker closures to drain admitted queued work.
+    ///
+    /// # Parameters
+    ///
+    /// * `count` - Number of worker closures to schedule.
     fn dispatch(&self, count: usize) {
         for _ in 0..count {
             let pool = Arc::clone(&self.pool);
@@ -174,6 +207,11 @@ impl RayonExecutorService {
 ///
 /// Panics from user tasks are caught so the service state can account for the
 /// completed worker closure before Rayon executes another queued job.
+///
+/// # Parameters
+///
+/// * `pool` - Rayon pool used to schedule the next queued job.
+/// * `state` - Shared state tracking accepted work and lifecycle counters.
 fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
     let Some(job) = state.take_next() else {
         return;
@@ -186,12 +224,14 @@ fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
 }
 
 impl ExecutorService for RayonExecutorService {
+    /// Handle that observes a submitted callable's result.
     type ResultHandle<R, E>
         = TaskHandle<R, E>
     where
         R: Send + 'static,
         E: Send + 'static;
 
+    /// Handle that observes and can cancel a queued callable.
     type TrackedHandle<R, E>
         = RayonTaskHandle<R, E>
     where
@@ -204,6 +244,17 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Runnable submitted for execution.
+    /// * `E` - Runnable error type.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Runnable to execute.
     fn submit<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -218,6 +269,18 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute.
     fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -233,6 +296,18 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute and track.
     fn submit_tracked_callable<C, R, E>(&self, task: C) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,

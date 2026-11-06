@@ -204,7 +204,9 @@ where
 }
 
 impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
+    /// Result produced by the tracked task.
     type Output = TaskResult<R, E>;
+    /// Future that resolves to the tracked task result.
     type IntoFuture = TaskHandleFuture<R, E>;
 
     /// Converts this handle into a future resolving to the task result.

@@ -13,6 +13,11 @@ use qubit_function::Runnable;
 use crate::queued_job::QueuedJob;
 
 /// Queued fire-and-forget runnable.
+///
+/// # Type Parameters
+///
+/// * `T` - Runnable executed by a Rayon worker.
+/// * `E` - Runnable error type.
 pub(crate) struct RunnableJob<T, E> {
     /// User task executed after a Rayon worker claims this job.
     task: T,
@@ -22,6 +27,15 @@ pub(crate) struct RunnableJob<T, E> {
 
 impl<T, E> RunnableJob<T, E> {
     /// Stores a detached runnable until a worker handles it.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Runnable executed by a Rayon worker.
+    /// * `E` - Runnable error type.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Runnable to queue.
     pub(crate) const fn new(task: T) -> Self {
         Self {
             task,

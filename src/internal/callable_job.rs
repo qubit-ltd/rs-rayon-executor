@@ -12,6 +12,12 @@ use qubit_function::Callable;
 use crate::queued_job::QueuedJob;
 
 /// Queued callable and the completion slot used to publish its result.
+///
+/// # Type Parameters
+///
+/// * `C` - Callable executed by a Rayon worker.
+/// * `R` - Successful callable result.
+/// * `E` - Callable error.
 pub(crate) struct CallableJob<C, R, E> {
     /// User callable executed after the Rayon worker claims this job.
     task: C,
@@ -21,6 +27,17 @@ pub(crate) struct CallableJob<C, R, E> {
 
 impl<C, R, E> CallableJob<C, R, E> {
     /// Stores a callable and its completion slot until a worker handles it.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable executed by a Rayon worker.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to queue.
+    /// * `slot` - Endpoint for publishing the callable result.
     pub(crate) const fn new(task: C, slot: TaskSlot<R, E>) -> Self {
         Self { task, slot }
     }
