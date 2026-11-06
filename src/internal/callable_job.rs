@@ -61,13 +61,26 @@ where
     }
 
     /// Runs the callable through the standard task runner.
+    ///
+    /// The callable invocation and its destructor are protected by an unwind
+    /// boundary so either panic is reported as a task panic. An original panic
+    /// payload is safely discarded before a static replacement payload is
+    /// resumed; resuming it does not invoke the panic hook a second time. A
+    /// second panic during unwinding can still abort the process.
     fn run(self: Box<Self>) {
-        let Self { mut task, slot } = *self;
-        let safe_task = move || match catch_unwind(AssertUnwindSafe(|| task.call())) {
-            Ok(result) => result,
-            Err(payload) => {
-                discard_panic_payload(payload);
-                panic!("callable panicked");
+        let Self { task, slot } = *self;
+        let mut task = Some(task);
+        let safe_task = move || {
+            let task = task.take().expect("queued callable runs once");
+            match catch_unwind(AssertUnwindSafe(move || {
+                let mut task = task;
+                task.call()
+            })) {
+                Ok(result) => result,
+                Err(payload) => {
+                    discard_panic_payload(payload);
+                    std::panic::resume_unwind(Box::new("callable panicked"));
+                }
             }
         };
         let _ignored = TaskRunner::new(safe_task).run(slot);
