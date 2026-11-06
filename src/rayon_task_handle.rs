@@ -11,6 +11,7 @@ use std::panic::catch_unwind;
 use std::sync::Arc;
 
 use qubit_executor::CancelResult;
+use qubit_executor::CancellableTaskHandle;
 use qubit_executor::TaskCancellationHandle;
 use qubit_executor::TaskResult;
 use qubit_executor::TaskStatus;
@@ -236,6 +237,19 @@ where
         cancel_task(&self.state, self.task_id, || {
             cancellation_result_for_status(self.status())
         })
+    }
+}
+
+impl<R, E> CancellableTaskHandle<R, E> for RayonTaskHandle<R, E>
+where
+    R: Send + 'static,
+    E: Send + 'static,
+{
+    /// Creates an independent endpoint that preserves Rayon job cleanup and
+    /// cancellation accounting.
+    #[inline]
+    fn cancellation_handle(&self) -> TaskCancellationHandle {
+        RayonTaskHandle::cancellation_handle(self)
     }
 }
 
