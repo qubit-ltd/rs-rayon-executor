@@ -163,8 +163,6 @@ dependencies = [
 [[package]]
 name = "qubit-executor"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd570aac02516990873f6d72975c03ba3e99e2dfcf33dc53d7017d2f6d5891f"
 dependencies = [
  "log",
  "oneshot",
