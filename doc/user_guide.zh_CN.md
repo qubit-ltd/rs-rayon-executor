@@ -185,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 对于返回结果句柄的提交，任务失败或 panic 通过 `get` 或 `.await` 观察。detached `submit` 只返回接纳状态，并丢弃任务最终结果。调用方需要观察失败时，请改用 callable 提交，或由 detached 任务自行报告错误。
 
-panic 转换仅适用于可捕获的展开式 panic。它无法恢复 `panic=abort`、展开期间再次发生的 panic，也无法让永不返回的析构函数完成。这些情况可能导致进程终止，或使任务清理和服务终止无法完成。
+panic 转换仅适用于可捕获的展开式 panic。它无法恢复 `panic=abort`、展开期间再次发生的 panic，也无法让永不返回的析构函数完成。这些情况可能导致进程中止，或使任务清理和服务终止无法完成。
 
 ## 排障
 
