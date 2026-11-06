@@ -38,11 +38,11 @@ async-wait = ["dep:tokio"]
 [dependencies]
 rayon = "^1.12"
 thiserror = "^2.0"
-tokio = { version = "^1.53", features = ["sync"], optional = true }
+tokio = { version = "^1.54", features = ["sync"], optional = true }
 
 parking_lot = "^0.12"
-qubit-executor = "0.9"
-qubit-function = "0.18"
+qubit-executor = "^0.9"
+qubit-function = "^0.18"
 
 [dev-dependencies]
-tokio = { version = "^1.53", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "^1.54", features = ["macros", "rt-multi-thread", "time"] }
