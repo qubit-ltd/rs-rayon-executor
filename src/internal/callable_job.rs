@@ -5,10 +5,14 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
+
 use qubit_executor::task::spi::TaskRunner;
 use qubit_executor::task::spi::TaskSlot;
 use qubit_function::Callable;
 
+use crate::internal::discard_panic_payload;
 use crate::queued_job::QueuedJob;
 
 /// Queued callable and the completion slot used to publish its result.
@@ -58,8 +62,15 @@ where
 
     /// Runs the callable through the standard task runner.
     fn run(self: Box<Self>) {
-        let Self { task, slot } = *self;
-        let _ignored = TaskRunner::new(task).run(slot);
+        let Self { mut task, slot } = *self;
+        let safe_task = move || match catch_unwind(AssertUnwindSafe(|| task.call())) {
+            Ok(result) => result,
+            Err(payload) => {
+                discard_panic_payload(payload);
+                panic!("callable panicked");
+            }
+        };
+        let _ignored = TaskRunner::new(safe_task).run(slot);
     }
 
     /// Marks the endpoint cancelled and drops the unstarted callable.

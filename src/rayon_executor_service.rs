@@ -25,6 +25,7 @@ use crate::RayonExecutorServiceStats;
 use crate::internal::Admission;
 use crate::internal::CallableJob;
 use crate::internal::RunnableJob;
+use crate::internal::discard_panic_payload;
 use crate::queued_job::QueuedJob;
 use crate::rayon_executor_service_build_error::RayonExecutorServiceBuildError;
 use crate::rayon_executor_service_builder::RayonExecutorServiceBuilder;
@@ -234,7 +235,9 @@ fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
     let Some(job) = state.take_next() else {
         return;
     };
-    let _ = catch_unwind(AssertUnwindSafe(|| job.run()));
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.run())) {
+        discard_panic_payload(payload);
+    }
     if state.finish_running() {
         let next_pool = Arc::clone(&pool);
         pool.spawn_fifo(move || run_one(next_pool, state));
