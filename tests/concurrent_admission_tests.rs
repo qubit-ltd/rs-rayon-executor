@@ -279,7 +279,8 @@ fn test_completion_cancellation_and_submission_keep_progress() {
                 accepted_handles.push((id, handle));
             }
             Err(SubmissionError::Saturated) => {
-                // The callable was consumed; the producer's unique ID is rebuilt below.
+                // The callable was consumed; the producer's unique ID is
+                // rebuilt below.
                 let task_count = Arc::clone(&count);
                 let handle = service
                     .submit_tracked_callable(move || {

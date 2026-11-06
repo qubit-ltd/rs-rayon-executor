@@ -63,7 +63,8 @@ async fn test_multiple_capacity_waiters_retry_until_accepted() {
             let accepted_tx = accepted_tx.clone();
             let delay_rx = if id == 0 { delay_rx.take() } else { None };
             producers.push(tokio::spawn(async move {
-                // Subscribe before the first attempt so a change cannot be missed.
+                // Subscribe before the first attempt so a change cannot be
+                // missed.
                 let mut changes = service.capacity_changes();
                 let mut delayed_wait = delay_rx;
                 let mut reported_saturated = false;
@@ -140,7 +141,8 @@ async fn test_multiple_capacity_waiters_retry_until_accepted() {
         accepted.sort_unstable();
         assert_eq!(accepted, vec![0, 1, 2, 3]);
 
-        // Also wait for task results, with the whole orchestration bounded above.
+        // Also wait for task results, with the whole orchestration bounded
+        // above.
         for producer in producers {
             let (id, result) = producer.await.expect("producer should not panic");
             assert_eq!(result, id);
