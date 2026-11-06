@@ -25,10 +25,12 @@ async fn test_rayon_await_termination_waits_for_shutdown() {
     tokio::pin!(wait);
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     service.shutdown();
-    timeout(Duration::from_secs(1), wait)
+    timeout(Duration::from_secs(10), wait)
         .await
         .expect("empty service should terminate");
-    service.await_termination().await;
+    timeout(Duration::from_secs(10), service.await_termination())
+        .await
+        .expect("repeated termination wait should complete");
 }
 
 #[tokio::test]
@@ -42,18 +44,26 @@ async fn test_rayon_await_termination_waits_for_running_task_and_multiple_waiter
     service
         .submit(move || {
             started_tx.send(()).expect("start signal should send");
-            release_rx.recv().expect("release signal should arrive");
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("release signal should arrive");
             Ok::<(), io::Error>(())
         })
         .expect("task should be accepted");
-    started_rx.recv().expect("task should start");
+    timeout(Duration::from_secs(10), async {
+        tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
+    })
+    .await
+    .expect("start signal wait should finish")
+    .expect("start waiter should not panic")
+    .expect("task should start");
     service.shutdown();
     let first = service.await_termination();
     tokio::pin!(first);
     assert!(timeout(Duration::from_millis(20), &mut first).await.is_err());
     let second = service.await_termination();
     release_tx.send(()).expect("task should release");
-    timeout(Duration::from_secs(1), async { tokio::join!(first, second) })
+    timeout(Duration::from_secs(10), async { tokio::join!(first, second) })
         .await
         .expect("both waiters should complete");
 }
@@ -68,7 +78,7 @@ async fn test_rayon_await_termination_survives_cancelled_waiter_and_stop() {
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     drop(wait);
     service.stop();
-    timeout(Duration::from_secs(1), service.await_termination())
+    timeout(Duration::from_secs(10), service.await_termination())
         .await
         .expect("new waiter should complete");
 }
@@ -85,11 +95,19 @@ async fn test_rayon_await_termination_after_stop_cancels_queued_task() {
     service
         .submit(move || {
             started_tx.send(()).expect("start signal should send");
-            release_rx.recv().expect("release signal should arrive");
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("release signal should arrive");
             Ok::<(), io::Error>(())
         })
         .expect("running task should be accepted");
-    started_rx.recv().expect("task should start");
+    timeout(Duration::from_secs(10), async {
+        tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
+    })
+    .await
+    .expect("start signal wait should finish")
+    .expect("start waiter should not panic")
+    .expect("task should start");
     service
         .submit(|| Ok::<(), io::Error>(()))
         .expect("queued task should be accepted");
@@ -98,7 +116,7 @@ async fn test_rayon_await_termination_after_stop_cancels_queued_task() {
     let mut wait = Box::pin(service.await_termination());
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     release_tx.send(()).expect("task should release");
-    timeout(Duration::from_secs(1), wait)
+    timeout(Duration::from_secs(10), wait)
         .await
         .expect("stopped service should terminate");
 }

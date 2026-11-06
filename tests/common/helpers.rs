@@ -59,7 +59,9 @@ pub(crate) fn submit_blocking_task(
     let handle = service
         .submit_tracked(move || {
             started_tx.send(()).expect("test should receive task start signal");
-            release_rx.recv().map_err(|err| io::Error::other(err.to_string()))?;
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|err| io::Error::other(err.to_string()))?;
             Ok::<(), io::Error>(())
         })
         .expect("blocking task should be accepted");

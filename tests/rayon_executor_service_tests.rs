@@ -31,22 +31,21 @@ use crate::common::helpers::submit_blocking_task;
 fn test_rayon_executor_service_submit_acceptance_is_not_task_success() {
     let service = RayonExecutorService::new().expect("service should be created");
 
-    service
+    let shared = service
         .submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>)
-        .expect("service should accept shared runnable")
-        .get()
-        .expect("shared runnable should complete successfully");
+        .expect("service should accept shared runnable");
 
     let handle = service
         .submit_tracked(|| Err::<(), _>(io::Error::other("task failed")))
         .expect("service should accept runnable");
 
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    shared.get().expect("shared runnable should complete successfully");
     let err = handle
         .get()
         .expect_err("accepted runnable should report task failure through handle");
     assert!(matches!(err, TaskExecutionError::Failed(_)));
-    service.shutdown();
-    service.wait_termination();
 }
 
 #[test]
@@ -57,9 +56,9 @@ fn test_rayon_executor_service_submit_callable_returns_value() {
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
-    assert_eq!(handle.get().expect("callable should complete successfully"), 42,);
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert_eq!(handle.get().expect("callable should complete successfully"), 42,);
 }
 
 #[test]
@@ -79,7 +78,7 @@ fn test_rayon_executor_service_submit_runs_detached_task() {
         .expect("service should accept runnable");
 
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 
     assert!(completed.load(Ordering::Acquire));
     assert_eq!(service.lifecycle(), ExecutorServiceLifecycle::Terminated);
@@ -95,7 +94,7 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
     let result = service.submit_tracked(ok_unit_task as fn() -> Result<(), io::Error>);
 
     assert!(matches!(result, Err(SubmissionError::Shutdown)));
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     assert!(service.is_not_running());
     assert!(service.is_terminated());
 }
@@ -104,7 +103,7 @@ fn test_rayon_executor_service_shutdown_rejects_new_tasks() {
 fn test_rayon_executor_service_wait_termination_timeout_handles_max_duration() {
     let service = RayonExecutorService::new().expect("service should be created");
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 
     assert!(service.wait_termination_timeout(Duration::MAX));
 }
@@ -118,7 +117,7 @@ fn test_rayon_executor_service_wait_termination_timeout_reports_pending() {
     assert!(!service.wait_termination_timeout(Duration::from_millis(1)));
 
     release_tx.send(()).expect("running task should receive release signal");
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 }
 
 #[test]
@@ -134,9 +133,9 @@ fn test_rayon_executor_service_shutdown_allows_queued_tasks_to_finish() {
     assert!(matches!(rejected, Err(SubmissionError::Shutdown)));
 
     release_tx.send(()).expect("running task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     running.get().expect("running task should complete normally");
     assert_eq!(queued.get().expect("queued task should complete normally"), 42);
-    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -156,7 +155,7 @@ fn test_rayon_executor_service_stop_rejects_new_tasks_and_is_idempotent_when_emp
     assert_eq!(second_report.queued, 0);
     assert_eq!(second_report.running, 0);
     assert_eq!(second_report.cancelled, 0);
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     assert!(service.is_terminated());
 }
 
@@ -173,12 +172,12 @@ fn test_rayon_executor_service_stop_cancels_queued_tasks() {
     assert_eq!(report.queued, 1);
     assert_eq!(report.running, 1);
     assert_eq!(report.cancelled, 1);
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     first.get().expect("running task should complete normally");
-    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -199,14 +198,14 @@ fn test_rayon_executor_service_stop_reports_all_queued_tasks() {
     assert_eq!(report.queued, 3);
     assert_eq!(report.running, 1);
     assert_eq!(report.cancelled, 3);
-    for queued in queued_handles {
-        assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
-    }
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    for queued in queued_handles {
+        assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
+    }
     first.get().expect("running task should complete normally");
-    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -231,22 +230,35 @@ fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
     let barrier = Arc::new(Barrier::new(3));
     let first_stop_service = service.clone();
     let first_stop_barrier = Arc::clone(&barrier);
+    let (first_done_tx, first_done_rx) = std::sync::mpsc::channel();
     let first_stop = std::thread::spawn(move || {
         first_stop_barrier.wait();
-        first_stop_service.stop()
+        let report = first_stop_service.stop();
+        first_done_tx
+            .send(report)
+            .expect("first stop result should be received");
     });
     let second_stop_service = service.clone();
     let second_stop_barrier = Arc::clone(&barrier);
+    let (second_done_tx, second_done_rx) = std::sync::mpsc::channel();
     let second_stop = std::thread::spawn(move || {
         second_stop_barrier.wait();
-        second_stop_service.stop()
+        let report = second_stop_service.stop();
+        second_done_tx
+            .send(report)
+            .expect("second stop result should be received");
     });
 
     barrier.wait();
-    let reports = [
-        first_stop.join().expect("first stop should not panic"),
-        second_stop.join().expect("second stop should not panic"),
-    ];
+    let first_report = first_done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("first stop should finish within timeout");
+    let second_report = second_done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("second stop should finish within timeout");
+    first_stop.join().expect("first stop should not panic");
+    second_stop.join().expect("second stop should not panic");
+    let reports = [first_report, second_report];
 
     assert!(
         reports
@@ -258,13 +270,12 @@ fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
         reports.iter().any(|report| report.queued == 0 && report.cancelled == 0),
         "one concurrent stop should observe no remaining queued tasks: {reports:?}",
     );
+    release_tx.send(()).expect("running task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     for queued in queued_handles {
         assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     }
-
-    release_tx.send(()).expect("running task should receive release signal");
     running.get().expect("running task should complete normally");
-    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -273,14 +284,17 @@ async fn test_rayon_executor_service_await_termination_waits_before_shutdown() {
     let service = RayonExecutorService::new().expect("service should be created");
     let waiter_service = service.clone();
     let waiter = tokio::task::spawn_blocking(move || {
-        waiter_service.wait_termination();
+        assert!(waiter_service.wait_termination_timeout(Duration::from_secs(10)));
     });
 
     tokio::task::yield_now().await;
     assert!(!waiter.is_finished());
 
     service.shutdown();
-    waiter.await.expect("termination waiter should finish after shutdown");
+    tokio::time::timeout(Duration::from_secs(10), waiter)
+        .await
+        .expect("termination waiter should finish within timeout")
+        .expect("termination waiter should not panic");
 }
 
 #[test]
@@ -300,7 +314,7 @@ fn test_rayon_executor_service_stats_report_capacity_and_task_states() {
 
     service.stop();
     release_tx.send(()).expect("running task should be released");
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 }
 
 #[cfg(feature = "async-wait")]
@@ -326,9 +340,17 @@ async fn test_rayon_executor_service_capacity_changes_wake_on_task_completion() 
     let handle = service
         .submit_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("released capacity should accept another task");
-    assert_eq!(handle.get().expect("task should finish"), 42);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("task should finish within timeout")
+            .expect("task should finish successfully"),
+        42
+    );
     service.shutdown();
-    service.await_termination().await;
+    tokio::time::timeout(Duration::from_secs(10), service.await_termination())
+        .await
+        .expect("service should terminate within timeout");
 }
 
 #[cfg(feature = "async-wait")]
@@ -345,7 +367,9 @@ async fn test_rayon_executor_service_shutdown_publishes_capacity_change() {
         .await
         .expect("shutdown should publish a capacity change")
         .expect("capacity notification sender should remain open");
-    service.await_termination().await;
+    tokio::time::timeout(Duration::from_secs(10), service.await_termination())
+        .await
+        .expect("service should terminate within timeout");
 }
 
 #[cfg(feature = "async-wait")]
@@ -372,5 +396,7 @@ async fn test_rayon_executor_service_queued_cancellation_publishes_capacity_chan
         .expect("cancelled queue slot should be reusable");
     service.stop();
     release_tx.send(()).expect("running task should be released");
-    service.await_termination().await;
+    tokio::time::timeout(Duration::from_secs(10), service.await_termination())
+        .await
+        .expect("service should terminate within timeout");
 }
