@@ -35,7 +35,13 @@ use crate::rayon_task_handle::RayonTaskHandle;
 ///
 /// The service owns a dedicated Rayon pool. Accepted tasks are bounded by the
 /// configured capacity; shutdown allows queued work to finish, while stop
-/// cancels work that has not started.
+/// cancels work that has not started. Cancelling queued work runs its cleanup
+/// (including captured values' destructors) synchronously on the thread that
+/// calls `stop`; that cleanup can take as long as user-defined destructors
+/// take. Such cleanup remains counted as cancelling until it finishes, even
+/// if the task's cancellation result is already observable. Running CPU work
+/// is not forcibly interrupted. Cleanup must not synchronously wait for a
+/// termination condition that depends on that same cleanup finishing.
 ///
 /// # Examples
 ///
@@ -84,8 +90,16 @@ impl RayonExecutorService {
 
     /// Waits asynchronously for shutdown or stop and all accepted work.
     ///
-    /// The wait occupies no Rayon or Tokio blocking thread. Dropping this
-    /// future cancels only the wait and leaves the service lifecycle intact.
+    /// The wait itself occupies no Rayon or Tokio blocking thread. It does not
+    /// make a preceding synchronous `stop` or task cancellation non-blocking:
+    /// queued task cleanup, including captured values' destructors, runs on
+    /// the thread that performs that operation. Dropping this future cancels
+    /// only the wait and leaves the service lifecycle intact. Running CPU work
+    /// is not forcibly interrupted, so termination still depends on accepted
+    /// running tasks finishing.
+    ///
+    /// Requires the `async-wait` feature. The wait can be driven by any Rust
+    /// future executor; it does not require a Tokio runtime.
     #[cfg(feature = "async-wait")]
     pub async fn await_termination(&self) {
         let mut receiver = self.state.subscribe_termination();
@@ -111,6 +125,11 @@ impl RayonExecutorService {
     ///
     /// A notification is only a hint; callers must retry submission because
     /// another producer may consume the available capacity first.
+    /// Subscribe before the first submission attempt so a capacity change
+    /// between a saturated attempt and waiting cannot be missed. A closed
+    /// receiver means the service state has been dropped.
+    ///
+    /// Requires the `async-wait` feature.
     ///
     /// # Returns
     ///
@@ -132,6 +151,21 @@ impl RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    /// * `H` - Handle returned for the callable.
+    /// * `F` - Endpoint conversion that creates the handle and result slot.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute.
+    /// * `split` - Converts a task endpoint pair into a handle and slot.
     fn submit_callable_with<C, R, E, H, F>(&self, task: C, split: F) -> Result<H, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -152,6 +186,17 @@ impl RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Runnable submitted for execution.
+    /// * `E` - Runnable error type.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Detached runnable to execute.
     fn submit_runnable<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -163,6 +208,10 @@ impl RayonExecutorService {
     }
 
     /// Schedules exactly `count` worker closures to drain admitted queued work.
+    ///
+    /// # Parameters
+    ///
+    /// * `count` - Number of worker closures to schedule.
     fn dispatch(&self, count: usize) {
         for _ in 0..count {
             let pool = Arc::clone(&self.pool);
@@ -176,6 +225,11 @@ impl RayonExecutorService {
 ///
 /// Panics from user tasks are caught so the service state can account for the
 /// completed worker closure before Rayon executes another queued job.
+///
+/// # Parameters
+///
+/// * `pool` - Rayon pool used to schedule the next queued job.
+/// * `state` - Shared state tracking accepted work and lifecycle counters.
 fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
     let Some(job) = state.take_next() else {
         return;
@@ -188,12 +242,14 @@ fn run_one(pool: Arc<RayonThreadPool>, state: Arc<RayonExecutorServiceState>) {
 }
 
 impl ExecutorService for RayonExecutorService {
+    /// Handle that observes a submitted callable's result.
     type ResultHandle<R, E>
         = TaskHandle<R, E>
     where
         R: Send + 'static,
         E: Send + 'static;
 
+    /// Handle that observes and can cancel a queued callable.
     type TrackedHandle<R, E>
         = RayonTaskHandle<R, E>
     where
@@ -206,6 +262,17 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Runnable submitted for execution.
+    /// * `E` - Runnable error type.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Runnable to execute.
     fn submit<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -220,6 +287,18 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute.
     fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -235,6 +314,18 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
     /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute and track.
     fn submit_tracked_callable<C, R, E>(&self, task: C) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -261,12 +352,22 @@ impl ExecutorService for RayonExecutorService {
 
     /// Stops accepting tasks and cancels queued tasks.
     ///
-    /// Running CPU work is not forcibly interrupted. The returned report
-    /// distinguishes running, queued, and cancelled tasks.
+    /// Queued task cleanup, including captured values' destructors, runs
+    /// synchronously on this caller's thread. Its duration depends on that
+    /// cleanup and is not bounded by this method. During cleanup, tasks remain
+    /// counted as cancelling until their cleanup finishes; a cancellation
+    /// result becoming visible does not itself release capacity. Running CPU
+    /// work is not forcibly interrupted. The returned report distinguishes
+    /// running, queued, and cancelled tasks.
+    ///
+    /// Avoid calling this from cleanup code that synchronously waits for
+    /// termination, since that can wait on the cleanup currently in progress.
     fn stop(&self) -> StopReport {
         let (report, jobs) = self.state.stop();
         for (task_id, job) in jobs {
-            let _ = catch_unwind(AssertUnwindSafe(|| job.cancel()));
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
+                crate::internal::discard_panic_payload(payload);
+            }
             self.state.finish_cancelling(task_id);
         }
         report

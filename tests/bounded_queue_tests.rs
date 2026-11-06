@@ -16,6 +16,8 @@ use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
 
+use crate::common::helpers::wait_started;
+
 #[test]
 fn test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity() {
     let service = RayonExecutorService::builder()
@@ -28,11 +30,13 @@ fn test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity() {
     let running = service
         .submit_tracked(move || {
             started_tx.send(()).expect("running task should start");
-            release_rx.recv().expect("running task should be released");
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("running task should be released");
             Ok::<(), io::Error>(())
         })
         .expect("running task should be accepted");
-    started_rx.recv().expect("running task should start");
+    wait_started(started_rx);
     let queued = service
         .submit_tracked(|| Ok::<(), io::Error>(()))
         .expect("queued task should be accepted");
@@ -41,7 +45,6 @@ fn test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity() {
         Err(SubmissionError::Saturated)
     ));
     assert_eq!(queued.cancel(), CancelResult::Cancelled);
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     let replacement = service
         .submit_callable(|| Ok::<(), io::Error>(()))
         .expect("cancelled capacity should be reusable");
@@ -51,7 +54,8 @@ fn test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity() {
         Err(SubmissionError::Shutdown)
     ));
     release_tx.send(()).expect("running task should be released");
+    assert!(service.wait_termination_timeout(std::time::Duration::from_secs(10)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     running.get().expect("running task should finish");
     replacement.get().expect("replacement task should finish");
-    service.wait_termination();
 }

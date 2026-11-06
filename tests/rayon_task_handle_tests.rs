@@ -10,6 +10,9 @@
 mod common;
 
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -36,9 +39,15 @@ async fn test_rayon_task_handle_can_be_awaited() {
         .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
         .expect("service should accept callable");
 
-    assert_eq!(handle.await.expect("handle should await result"), 42);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("handle should resolve within timeout")
+            .expect("handle should await result"),
+        42
+    );
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
 }
 
 #[test]
@@ -51,13 +60,13 @@ fn test_rayon_task_handle_cancel_before_start_reports_cancelled() {
 
     assert_eq!(queued.cancel(), CancelResult::Cancelled);
     assert!(queued.is_done());
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     service.shutdown();
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     first.get().expect("running task should complete normally");
-    service.wait_termination();
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
 }
 
 #[test]
@@ -68,9 +77,9 @@ fn test_rayon_task_handle_reports_panicked_task() {
         .submit_tracked(|| -> Result<(), io::Error> { panic!("rayon service panic") })
         .expect("service should accept panicking task");
 
-    assert!(matches!(handle.get(), Err(TaskExecutionError::Panicked)));
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert!(matches!(handle.get(), Err(TaskExecutionError::Panicked)));
 }
 
 #[test]
@@ -82,9 +91,9 @@ fn test_rayon_task_handle_cancel_after_completion_returns_false() {
 
     wait_until(|| handle.is_done());
     assert_eq!(handle.cancel(), CancelResult::AlreadyFinished);
-    assert_eq!(handle.get().expect("callable should complete"), 42);
     service.shutdown();
-    service.wait_termination();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert_eq!(handle.get().expect("callable should complete"), 42);
 }
 
 #[test]
@@ -102,12 +111,12 @@ fn test_rayon_task_handle_cancel_running_reports_already_running() {
     );
     assert!(!<_ as TaskResultHandle<(), io::Error>>::is_done(&handle));
 
+    service.shutdown();
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     <_ as TaskResultHandle<(), io::Error>>::get(handle).expect("task should complete");
-    service.shutdown();
-    service.wait_termination();
 }
 
 #[test]
@@ -121,27 +130,53 @@ fn test_rayon_task_handle_cancel_during_start_race_never_reports_unsupported() {
 
         let queued_handles = (0..QUEUED_TASKS)
             .map(|_| {
-                service
-                    .submit_tracked_callable(ok_usize_task as fn() -> Result<usize, io::Error>)
-                    .expect("queued task should be accepted")
+                let executions = Arc::new(AtomicUsize::new(0));
+                let task_executions = Arc::clone(&executions);
+                let handle = service
+                    .submit_tracked(move || {
+                        task_executions.fetch_add(1, Ordering::SeqCst);
+                        Ok::<(), io::Error>(())
+                    })
+                    .expect("queued task should be accepted");
+                (handle, executions)
             })
             .collect::<Vec<_>>();
 
         release_tx.send(()).expect("running task should receive release signal");
-        for handle in &queued_handles {
-            assert_ne!(
-                handle.cancel(),
-                CancelResult::Unsupported,
-                "rayon task handles should keep cancellation semantics while a task is starting",
-            );
-        }
+        let cancel_results = queued_handles
+            .iter()
+            .map(|(handle, _)| {
+                let result = handle.cancel();
+                assert_ne!(
+                    result,
+                    CancelResult::Unsupported,
+                    "rayon task handles should keep cancellation semantics while a task is starting",
+                );
+                result
+            })
+            .collect::<Vec<_>>();
 
-        running.get().expect("running task should complete normally");
-        for handle in queued_handles {
-            let _ = handle.get();
-        }
         service.shutdown();
-        service.wait_termination();
+        assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+        running.get().expect("running task should complete normally");
+        for ((handle, executions), cancel_result) in queued_handles.into_iter().zip(cancel_results) {
+            let result = handle.get();
+            match cancel_result {
+                CancelResult::Cancelled => {
+                    assert!(matches!(result, Err(TaskExecutionError::Cancelled)));
+                    assert_eq!(executions.load(Ordering::SeqCst), 0);
+                }
+                CancelResult::AlreadyRunning | CancelResult::AlreadyFinished => {
+                    assert!(result.is_ok());
+                    assert_eq!(executions.load(Ordering::SeqCst), 1);
+                }
+                other => panic!("unexpected cancellation result: {other:?}"),
+            }
+        }
+        let stats = service.stats();
+        assert_eq!(stats.queued, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.cancelling, 0);
     }
 }
 
@@ -165,6 +200,8 @@ fn test_rayon_task_handle_reports_status_and_try_get_states() {
     release_tx
         .send(())
         .expect("blocking task should receive release signal");
+    service.shutdown();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     first.get().expect("running task should complete normally");
     wait_until(|| queued.status() == TaskStatus::Succeeded);
     assert_eq!(queued.status(), TaskStatus::Succeeded);
@@ -184,7 +221,4 @@ fn test_rayon_task_handle_reports_status_and_try_get_states() {
     };
 
     assert_eq!(result.expect("callable should complete"), 42);
-
-    service.shutdown();
-    service.wait_termination();
 }

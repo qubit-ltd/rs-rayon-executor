@@ -75,6 +75,112 @@ callable succeeded. Inspect the `TaskHandle` result for a task error or panic.
 `shutdown` finishes accepted work, while `wait_termination` waits for it to
 reach a terminal state.
 
+Submitting a task consumes its callable even when submission returns
+`Saturated` or `Shutdown`. Keep the inputs needed to retry outside the closure,
+then build a fresh callable for each attempt. For one-shot task values, keep
+shared ownership until submission succeeds or use a retry API designed to
+retain the task.
+
+## Async shutdown and capacity waits
+
+Async waiting is optional. Enable the crate feature to use
+`await_termination` and `capacity_changes`. The wait can be driven by any Rust
+future executor; it does not require a Tokio runtime. The example below uses
+Tokio APIs and therefore requires a Tokio runtime:
+
+```toml
+[dependencies]
+qubit-executor = "0.9"
+qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+```
+
+In async code, prefer `await_termination` after `shutdown` or `stop`. The
+synchronous `wait_termination` blocks its caller and should not run on a Tokio
+runtime worker. This only makes the termination wait non-blocking: `stop` and
+a successful queued-task `cancel` run captured-value destructors synchronously
+on their caller's thread, and their duration depends on user cleanup. Such work
+remains counted as `cancelling` until cleanup finishes, even if the cancellation
+result is already available. Do not let cleanup synchronously wait for
+termination that depends on that same cleanup.
+
+To keep potentially slow `stop` cleanup off a Tokio worker, run it in
+`spawn_blocking`, then await termination:
+
+```rust
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn stop_without_blocking_runtime(
+    service: &RayonExecutorService,
+) -> Result<(), tokio::task::JoinError> {
+    let stopping = service.clone();
+    let _report = tokio::task::spawn_blocking(move || stopping.stop()).await?;
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+This example requires the `async-wait` feature and a running Tokio runtime
+(the dependency configuration above enables Tokio's `rt-multi-thread`). The
+`?` propagates a `JoinError` if the blocking task panics or is cancelled before
+starting. Dropping the join future does not forcibly terminate a blocking
+closure that has already started. `stop` still cannot interrupt running CPU
+tasks; if one does not return, the termination wait can continue indefinitely.
+
+For backpressure, subscribe before submitting. After `Saturated`, wait for a
+change and retry with a new callable. Notifications are hints: another
+producer may take the capacity first, and the API makes no FIFO, fairness, or
+finite-wait guarantee. Handle `Shutdown` and a closed notification channel as
+terminal outcomes:
+
+```rust
+use std::io;
+
+use qubit_executor::service::{ExecutorService, SubmissionError};
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn submit_after_capacity(
+    service: &RayonExecutorService,
+    values: Vec<usize>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut changes = service.capacity_changes();
+    let handle = loop {
+        let task_values = values.clone();
+        match service.submit_callable(move || {
+            Ok::<usize, io::Error>(task_values.iter().copied().sum())
+        }) {
+            Ok(handle) => break handle,
+            Err(SubmissionError::Saturated) => {
+                if changes.changed().await.is_err() {
+                    return Err("service notification channel closed".into());
+                }
+            }
+            Err(SubmissionError::Shutdown) => return Err("service shut down".into()),
+            Err(error) => return Err(error.into()),
+        }
+    };
+    Ok(handle.await?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(2).task_capacity(8).build()?;
+    let total = submit_after_capacity(&service, vec![8, 13, 21, 34]).await?;
+    assert_eq!(total, 76);
+    service.shutdown();
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+`stats()` returns a consistent snapshot sampled under the service state lock.
+Its `queued`, `running`, and `cancelling` counts all consume capacity.
+`cancelling` includes cleanup still in progress after a task is removed from
+the queue. A result becoming available and a cancellation cleanup finishing
+can occur at slightly different times; observing or collecting a result does
+not itself release capacity.
+
 ## Advanced Usage
 
 Tracked handles support status and cancellation. Cancellation succeeds only
@@ -119,7 +225,7 @@ and cancelled tasks, but it cannot forcibly interrupt a running Rayon task.
 | Observation | Meaning and response |
 | --- | --- |
 | `ZeroThreadCount`, `ZeroStackSize`, or `ZeroTaskCapacity` | A builder value was zero; configure a non-zero value. |
-| `SubmissionError::Saturated` | Accepted unfinished work reached `task_capacity`; reduce pressure, collect results, cancel queued tracked work, or choose a suitable capacity. |
+| `SubmissionError::Saturated` | Accepted unfinished work reached `task_capacity`; wait for a capacity notification and retry with a newly constructed callable, reduce pressure, cancel queued tracked work, or choose a suitable capacity. |
 | `SubmissionError::Shutdown` | The service no longer admits tasks; submit new work only to a running service. |
 | `TaskExecutionError::Cancelled` | A queued tracked task was cancelled; resubmit only if the application still needs it. |
 
@@ -129,7 +235,8 @@ successful submission.
 ## Troubleshooting
 
 Capacity includes queued, running, and cancellation-in-progress tasks, not just
-visible queue items. If `wait_termination` does not return, call `shutdown` or
+visible queue items. Collecting a result does not release capacity; task
+completion or cancellation cleanup does. If `wait_termination` does not return, call `shutdown` or
 `stop` and check for blocked accepted tasks. Do not synchronously wait for a
 second task from the same saturated pool; use Rayon `join`/`scope` or async
 coordination. For long-running CPU work needing interruption, implement

@@ -106,6 +106,13 @@ impl<R, E> RayonTaskHandle<R, E> {
 
     /// Attempts to cancel the task before any Rayon worker starts it.
     ///
+    /// If this call claims the queued task, its cleanup, including captured
+    /// values' destructors, runs synchronously on this caller's thread and can
+    /// take as long as that cleanup takes. The task remains counted as
+    /// cancelling until cleanup finishes, even if its cancellation result is
+    /// already observable. Do not synchronously wait here for termination
+    /// that depends on this cleanup completing.
+    ///
     /// # Returns
     ///
     /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a
@@ -190,7 +197,9 @@ where
     fn cancel(&self) -> CancelResult {
         match self.state.cancel_pending_task(self.task_id) {
             CancelDisposition::Owned(job) => {
-                let _ = catch_unwind(AssertUnwindSafe(|| job.cancel()));
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.cancel())) {
+                    crate::internal::discard_panic_payload(payload);
+                }
                 self.state.finish_cancelling(self.task_id);
                 CancelResult::Cancelled
             }
@@ -204,7 +213,9 @@ where
 }
 
 impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
+    /// Result produced by the tracked task.
     type Output = TaskResult<R, E>;
+    /// Future that resolves to the tracked task result.
     type IntoFuture = TaskHandleFuture<R, E>;
 
     /// Converts this handle into a future resolving to the task result.

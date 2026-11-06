@@ -152,6 +152,10 @@ impl RayonExecutorServiceState {
     ///
     /// Returns [`SubmissionError::Shutdown`] when not running and
     /// [`SubmissionError::Saturated`] when the accepted-task limit is reached.
+    ///
+    /// # Parameters
+    ///
+    /// * `job` - Owned job to accept into the queue.
     pub(crate) fn admit(&self, job: Box<dyn QueuedJob>) -> Result<Admission, SubmissionError> {
         let mut inner = self.inner.lock();
         if inner.lifecycle != ExecutorServiceLifecycle::Running {
@@ -238,6 +242,10 @@ impl RayonExecutorServiceState {
     ///
     /// This removes the cancellation reservation and wakes any termination
     /// waiter that can now observe all accepted tasks in terminal states.
+    ///
+    /// # Parameters
+    ///
+    /// * `task_id` - Identifier of the job whose cleanup has completed.
     pub(crate) fn finish_cancelling(&self, task_id: usize) {
         let mut inner = self.inner.lock();
         inner.cancelling.remove(&task_id);
@@ -316,18 +324,23 @@ impl RayonExecutorServiceState {
         true
     }
 
-    /// Wakes termination waiters after the final accepted task reaches a
-    /// terminal state.
+    /// Notifies asynchronous capacity waiters that admission may have changed.
     #[cfg(feature = "async-wait")]
     fn notify_capacity_changed_locked(&self) {
         self.capacity_tx
             .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
+    /// Does nothing when asynchronous capacity notifications are disabled.
     #[cfg(not(feature = "async-wait"))]
     fn notify_capacity_changed_locked(&self) {}
 
     /// Wakes termination waiters after the final accepted task is terminal.
+    ///
+    /// # Parameters
+    ///
+    /// * `inner` - Locked service state used to determine whether all work
+    ///   ended.
     fn notify_if_terminated_locked(&self, inner: &RayonExecutorServiceInner) {
         if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(inner) == 0 {
             #[cfg(feature = "async-wait")]
@@ -338,6 +351,10 @@ impl RayonExecutorServiceState {
 }
 
 /// Returns the number of accepted tasks that have not reached a terminal state.
+///
+/// # Parameters
+///
+/// * `inner` - Service state containing queued, running, and cancelling tasks.
 fn occupied(inner: &RayonExecutorServiceInner) -> usize {
     inner.queue.len() + inner.running + inner.cancelling.len()
 }

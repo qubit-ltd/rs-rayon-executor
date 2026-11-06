@@ -12,6 +12,7 @@ mod common;
 
 use std::io;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
@@ -35,10 +36,10 @@ fn test_rayon_executor_service_state_stop_reports_running_and_queued() {
     assert_eq!(report.running, 1);
     assert_eq!(report.queued, 1);
     assert_eq!(report.cancelled, 1);
-    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     release_tx.send(()).expect("running task should receive release signal");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
     running.get().expect("running task should complete after release");
-    service.wait_termination();
     assert!(service.is_terminated());
 }
 
@@ -51,14 +52,16 @@ async fn test_rayon_executor_service_state_notifies_after_last_task_completes() 
     let handle = service
         .submit_callable(move || {
             started_tx.send(()).expect("test should receive task start signal");
-            release_rx.recv().map_err(|err| io::Error::other(err.to_string()))?;
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|err| io::Error::other(err.to_string()))?;
             Ok::<usize, io::Error>(42)
         })
         .expect("task should be accepted");
     wait_started(started_rx);
     let waiter_service = service.clone();
     let waiter = tokio::task::spawn_blocking(move || {
-        waiter_service.wait_termination();
+        assert!(waiter_service.wait_termination_timeout(Duration::from_secs(10)));
     });
 
     service.shutdown();
@@ -69,9 +72,16 @@ async fn test_rayon_executor_service_state_notifies_after_last_task_completes() 
     );
 
     release_tx.send(()).expect("running task should receive release signal");
-    assert_eq!(handle.await.expect("task should complete after release"), 42);
-    waiter
+    tokio::time::timeout(Duration::from_secs(10), waiter)
         .await
-        .expect("termination waiter should finish after final task completes");
+        .expect("termination waiter should finish within timeout")
+        .expect("termination waiter should not panic");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("task result should become available within timeout")
+            .expect("task should complete after release"),
+        42
+    );
     assert!(service.is_terminated());
 }

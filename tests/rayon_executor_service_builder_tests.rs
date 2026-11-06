@@ -56,6 +56,8 @@ fn test_rayon_executor_service_builder_sets_thread_options() {
         })
         .expect("service should accept callable");
 
+    service.shutdown();
+    assert!(service.wait_termination_timeout(std::time::Duration::from_secs(10)));
     assert!(
         handle
             .get()
@@ -63,6 +65,32 @@ fn test_rayon_executor_service_builder_sets_thread_options() {
             .starts_with("rayon-custom-"),
         "worker name should use the configured prefix",
     );
-    service.shutdown();
-    service.wait_termination();
+}
+
+#[test]
+fn test_rayon_executor_service_uses_pool_thread_count_for_dispatch() {
+    for num_threads in [1, 2] {
+        let service = RayonExecutorService::builder()
+            .num_threads(num_threads)
+            .task_capacity(4)
+            .build()
+            .expect("service should be created");
+        let handles = (0..4)
+            .map(|value| {
+                service
+                    .submit_callable(move || Ok::<_, io::Error>(value))
+                    .expect("service should accept work")
+            })
+            .collect::<Vec<_>>();
+
+        service.shutdown();
+        assert!(service.wait_termination_timeout(std::time::Duration::from_secs(10)));
+        for (expected, handle) in handles.into_iter().enumerate() {
+            assert_eq!(handle.get().expect("task should complete"), expected);
+        }
+        let stats = service.stats();
+        assert_eq!(stats.queued, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.cancelling, 0);
+    }
 }

@@ -63,6 +63,8 @@ Use `qubit-thread-pool` for synchronous work that may block on IO, and
   and best-effort cancellation before a worker starts the task.
 - A default accepted-task capacity of 1024 and `SubmissionError::Saturated` at
   capacity.
+- Consistent `stats()` snapshots, plus optional async termination and capacity
+  change notifications with the `async-wait` feature.
 - `shutdown` to finish accepted work, and `stop` to cancel queued work; neither
   forcibly stops CPU work that has already started.
 - `RayonExecutorServiceBuildError` for invalid thread, stack-size, and capacity

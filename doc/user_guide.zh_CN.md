@@ -61,6 +61,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `submit_callable` 成功只表示服务接纳了任务，并不表示 callable 已经成功完成。请从 `TaskHandle` 取得结果，以观察任务自己的错误或 panic。`shutdown` 会让已接纳任务完成，`wait_termination` 则等待它们进入终态。
 
+提交任务会消费 callable，即使提交返回 `Saturated` 或 `Shutdown` 也是如此。请在闭包外保留重试所需的输入，并为每次尝试重新构造 callable。对于只能使用一次的任务值，请在提交成功前保留共享所有权，或使用能够保留任务的重试 API。
+
+## 异步关闭与容量等待
+
+异步等待是可选功能。启用 crate 的 `async-wait` feature 后，可使用 `await_termination` 和 `capacity_changes`。等待 future 可由任何 Rust future executor 驱动，不要求 Tokio runtime。下面的示例使用 Tokio API，因此需要 Tokio runtime：
+
+```toml
+[dependencies]
+qubit-executor = "0.9"
+qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+```
+
+在 async 代码中，调用 `shutdown` 或 `stop` 后优先使用 `await_termination`。同步的 `wait_termination` 会阻塞调用线程，不应在 Tokio runtime worker 上执行。这只表示终止等待本身不会阻塞线程：`stop` 以及成功取消队列任务的 `cancel` 会在调用线程同步析构捕获值，耗时取决于用户清理逻辑。即使取消结果已经可见，这些任务在清理完成前仍计入 `cancelling`。不要让清理代码同步等待依赖该清理完成的终止条件。
+
+如果 `stop` 的清理可能耗时，请将它放入 `spawn_blocking`，再异步等待终止：
+
+```rust
+use qubit_executor::service::ExecutorService;
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn stop_without_blocking_runtime(
+    service: &RayonExecutorService,
+) -> Result<(), tokio::task::JoinError> {
+    let stopping = service.clone();
+    let _report = tokio::task::spawn_blocking(move || stopping.stop()).await?;
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+此示例需要启用 `async-wait` feature 并运行 Tokio runtime（上面的依赖配置已启用 Tokio 的 `rt-multi-thread`）。`?` 会传播 blocking task 在启动前被取消或发生 panic 时的 `JoinError`。丢弃 join future 不会强制终止已经开始运行的 blocking closure。`stop` 仍不会中断正在运行的 CPU 任务；如果任务不返回，终止等待也可能一直持续。
+
+处理背压时，请先订阅，再提交。收到 `Saturated` 后等待变化并使用新 callable 重试。通知只是提示：其他生产者可能先占用容量，而且 API 不保证 FIFO、公平性或有限等待。应将 `Shutdown` 和通知通道关闭视为终止结果：
+
+```rust
+use std::io;
+
+use qubit_executor::service::{ExecutorService, SubmissionError};
+use qubit_rayon_executor::RayonExecutorService;
+
+async fn submit_after_capacity(
+    service: &RayonExecutorService,
+    values: Vec<usize>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut changes = service.capacity_changes();
+    let handle = loop {
+        let task_values = values.clone();
+        match service.submit_callable(move || {
+            Ok::<usize, io::Error>(task_values.iter().copied().sum())
+        }) {
+            Ok(handle) => break handle,
+            Err(SubmissionError::Saturated) => {
+                if changes.changed().await.is_err() {
+                    return Err("服务通知通道已关闭".into());
+                }
+            }
+            Err(SubmissionError::Shutdown) => return Err("服务已关闭".into()),
+            Err(error) => return Err(error.into()),
+        }
+    };
+    Ok(handle.await?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(2).task_capacity(8).build()?;
+    let total = submit_after_capacity(&service, vec![8, 13, 21, 34]).await?;
+    assert_eq!(total, 76);
+    service.shutdown();
+    service.await_termination().await;
+    Ok(())
+}
+```
+
+`stats()` 返回在服务状态锁内采样的一致快照。`queued`、`running` 和 `cancelling` 都会占用容量。任务从队列移除后，`cancelling` 仍会统计尚未完成的清理。结果可用与取消清理完成可能存在短暂时间差；观察或收取结果本身不会释放容量。
+
 ## 进阶用法
 
 tracked 句柄支持查询状态和取消。任务仍在队列中时取消会成功；已运行的任务报告 `AlreadyRunning`，已完成的任务报告 `AlreadyFinished`。
@@ -102,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | 现象 | 含义与处理 |
 | --- | --- |
 | `ZeroThreadCount`、`ZeroStackSize` 或 `ZeroTaskCapacity` | builder 的值为零；请配置非零值。 |
-| `SubmissionError::Saturated` | 未完成的已接纳任务达到 `task_capacity`；降低提交压力、及时取得结果、取消队列中的 tracked 任务，或选择合适容量。 |
+| `SubmissionError::Saturated` | 未完成的已接纳任务达到 `task_capacity`；等待容量通知，并使用新构造的 callable 重试；也可降低提交压力、取消队列中的 tracked 任务，或选择合适容量。 |
 | `SubmissionError::Shutdown` | 服务已不再接纳任务；新任务只能提交给仍在运行的服务。 |
 | `TaskExecutionError::Cancelled` | 队列中的 tracked 任务已取消；仅在业务仍需要时重新提交。 |
 
@@ -110,7 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 排障
 
-容量统计的是排队、运行和取消中的已接纳任务，而不仅是可见队列项。`wait_termination` 一直没有返回时，请调用 `shutdown` 或 `stop`，并检查是否有已接纳任务被阻塞。不要让一项任务在同一个已饱和的池中同步等待另一项任务；请使用 Rayon `join`/`scope` 或异步协调。长时间 CPU 任务若需要中断，应由任务自身实现协作式取消；本服务不会强制停止它。
+容量统计的是排队、运行和取消中的已接纳任务，而不仅是可见队列项。收取结果不会释放容量；任务完成或取消清理完成后才释放。`wait_termination` 一直没有返回时，请调用 `shutdown` 或 `stop`，并检查是否有已接纳任务被阻塞。不要让一项任务在同一个已饱和的池中同步等待另一项任务；请使用 Rayon `join`/`scope` 或异步协调。长时间 CPU 任务若需要中断，应由任务自身实现协作式取消；本服务不会强制停止它。
 
 ## 限制与最佳实践
 
