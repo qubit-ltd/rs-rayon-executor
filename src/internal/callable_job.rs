@@ -30,6 +30,17 @@ pub(crate) struct CallableJob<C, R, E> {
 }
 
 impl<C, R, E> CallableJob<C, R, E> {
+    /// Recovers a callable from a job that was never accepted.
+    #[expect(
+        clippy::boxed_local,
+        reason = "the rejected typed Box owns the result slot that must be released before returning its callable"
+    )]
+    pub(crate) fn into_task(self: Box<Self>) -> C {
+        let Self { task, slot } = *self;
+        drop(slot);
+        task
+    }
+
     /// Stores a callable and its completion slot until a worker handles it.
     ///
     /// # Type Parameters

@@ -44,6 +44,7 @@ mod rayon_executor_service_builder;
 mod rayon_executor_service_state;
 mod rayon_executor_service_stats;
 mod rayon_task_handle;
+mod rejected_task;
 
 #[cfg(feature = "async-wait")]
 pub use capacity_changes::CapacityChanges;
@@ -54,3 +55,4 @@ pub use rayon_executor_service_build_error::RayonExecutorServiceBuildError;
 pub use rayon_executor_service_builder::RayonExecutorServiceBuilder;
 pub use rayon_executor_service_stats::RayonExecutorServiceStats;
 pub use rayon_task_handle::RayonTaskHandle;
+pub use rejected_task::RejectedTask;

@@ -184,17 +184,22 @@ impl RayonExecutorServiceState {
     /// # Parameters
     ///
     /// * `job` - Owned job to accept into the queue.
-    pub(crate) fn admit(&self, job: Box<dyn QueuedJob>) -> Result<Admission, SubmissionError> {
+    ///
+    /// # Type Parameters
+    ///
+    /// * `J` - Concrete queued job type, retained if admission fails.
+    pub(crate) fn admit<J: QueuedJob + 'static>(&self, job: Box<J>) -> Result<Admission, (SubmissionError, Box<J>)> {
         let mut inner = self.inner.lock();
         if inner.lifecycle != ExecutorServiceLifecycle::Running {
-            return Err(SubmissionError::Shutdown);
+            return Err((SubmissionError::Shutdown, job));
         }
         if occupied(&inner) >= inner.task_capacity {
-            return Err(SubmissionError::Saturated);
+            return Err((SubmissionError::Saturated, job));
         }
         let task_id = inner.next_task_id;
         inner.next_task_id = inner.next_task_id.checked_add(1).expect("task id exhausted");
         job.accept();
+        let job: Box<dyn QueuedJob> = job;
         inner.queue.insert(task_id, job);
         let dispatch_count = inner.queue.len().min(inner.num_threads.saturating_sub(inner.scheduled));
         inner.scheduled += dispatch_count;

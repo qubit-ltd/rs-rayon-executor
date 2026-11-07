@@ -344,7 +344,10 @@ mod tests {
             },
             slot,
         );
-        let admission = state.admit(Box::new(job)).expect("task should be admitted");
+        let admission = match state.admit(Box::new(job)) {
+            Ok(admission) => admission,
+            Err(_) => panic!("task should be admitted"),
+        };
         let handle = RayonTaskHandle::new(tracked, admission.task_id, Arc::clone(&state));
         let cancellation = handle.cancellation_handle();
         let (task_id, job) = state.take_next().expect("worker should take admitted task");

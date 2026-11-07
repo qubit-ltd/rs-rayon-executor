@@ -16,19 +16,18 @@ use qubit_executor::service::ExecutorServiceLifecycle;
 use qubit_executor::service::StopReport;
 use qubit_executor::service::SubmissionError;
 use qubit_executor::task::spi::TaskEndpointPair;
-use qubit_executor::task::spi::TaskSlot;
 use qubit_function::Callable;
 use qubit_function::Runnable;
 use rayon::ThreadPool as RayonThreadPool;
 
 use crate::RayonExecutorServiceStats;
+use crate::RejectedTask;
 use crate::internal::Admission;
 use crate::internal::CallableJob;
 use crate::internal::RunnableJob;
 #[cfg(feature = "async-wait")]
 use crate::internal::WakerPanicIsolation;
 use crate::internal::discard_panic_payload;
-use crate::queued_job::QueuedJob;
 use crate::rayon_executor_service_build_error::RayonExecutorServiceBuildError;
 use crate::rayon_executor_service_builder::RayonExecutorServiceBuilder;
 use crate::rayon_executor_service_state::RayonExecutorServiceState;
@@ -75,6 +74,43 @@ pub struct RayonExecutorService {
 }
 
 impl RayonExecutorService {
+    /// Tries to submit a callable, returning the original callable on
+    /// rejection.
+    ///
+    /// Shutdown takes precedence over saturation. The callable is never run or
+    /// dropped when rejected; its owner is returned in [`RejectedTask`].
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute if the service accepts it.
+    ///
+    /// # Returns
+    ///
+    /// Returns a task handle on acceptance, or the rejection reason together
+    /// with the original callable on rejection.
+    pub fn try_submit_callable<C, R, E>(&self, task: C) -> Result<TaskHandle<R, E>, RejectedTask<C>>
+    where
+        C: Callable<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let (handle, slot) = TaskEndpointPair::into_parts(TaskEndpointPair::new());
+        let job = Box::new(CallableJob::new(task, slot));
+        match self.state.admit(job) {
+            Ok(admission) => {
+                self.dispatch(admission.dispatch_count);
+                Ok(handle)
+            }
+            Err((reason, job)) => Err(RejectedTask::new(reason, job.into_task())),
+        }
+    }
+
     /// Creates a Rayon executor service with the default builder settings.
     ///
     /// # Returns
@@ -153,45 +189,6 @@ impl RayonExecutorService {
         self.state.capacity_changes()
     }
 
-    /// Admits a callable after converting its endpoint pair into a handle and
-    /// slot.
-    ///
-    /// The callable, result, error, and returned handle must be transferable to
-    /// the Rayon worker as required by the supplied endpoint conversion.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
-    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    /// The submitted task is consumed on either error; retain or reconstruct
-    /// its inputs before retrying.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `C` - Callable submitted for execution.
-    /// * `R` - Successful callable result.
-    /// * `E` - Callable error.
-    /// * `H` - Handle returned for the callable.
-    /// * `F` - Endpoint conversion that creates the handle and result slot.
-    ///
-    /// # Parameters
-    ///
-    /// * `task` - Callable to execute.
-    /// * `split` - Converts a task endpoint pair into a handle and slot.
-    fn submit_callable_with<C, R, E, H, F>(&self, task: C, split: F) -> Result<H, SubmissionError>
-    where
-        C: Callable<R, E> + Send + 'static,
-        R: Send + 'static,
-        E: Send + 'static,
-        F: FnOnce(TaskEndpointPair<R, E>) -> (H, TaskSlot<R, E>),
-    {
-        let (handle, slot) = split(TaskEndpointPair::new());
-        let job: Box<dyn QueuedJob> = Box::new(CallableJob::new(task, slot));
-        let admission = self.state.admit(job)?;
-        self.dispatch(admission.dispatch_count);
-        Ok(handle)
-    }
-
     /// Admits a detached runnable and schedules it for Rayon execution.
     ///
     /// # Errors
@@ -214,7 +211,10 @@ impl RayonExecutorService {
         T: Runnable<E> + Send + 'static,
         E: Send + 'static,
     {
-        let admission = self.state.admit(Box::new(RunnableJob::<T, E>::new(task)))?;
+        let admission = self
+            .state
+            .admit(Box::new(RunnableJob::<T, E>::new(task)))
+            .map_err(|(reason, _job)| reason)?;
         self.dispatch(admission.dispatch_count);
         Ok(())
     }
@@ -319,7 +319,8 @@ impl ExecutorService for RayonExecutorService {
         R: Send + 'static,
         E: Send + 'static,
     {
-        self.submit_callable_with(task, TaskEndpointPair::into_parts)
+        self.try_submit_callable(task)
+            .map_err(|rejected| rejected.into_parts().0)
     }
 
     /// Accepts a callable and returns a tracked handle for its eventual result.
@@ -347,11 +348,13 @@ impl ExecutorService for RayonExecutorService {
         E: Send + 'static,
     {
         let (handle, slot) = TaskEndpointPair::into_tracked_parts(TaskEndpointPair::new());
-        let job: Box<dyn QueuedJob> = Box::new(CallableJob::new(task, slot));
         let Admission {
             task_id,
             dispatch_count,
-        } = self.state.admit(job)?;
+        } = self
+            .state
+            .admit(Box::new(CallableJob::new(task, slot)))
+            .map_err(|(reason, _job)| reason)?;
         self.dispatch(dispatch_count);
         Ok(RayonTaskHandle::new(handle, task_id, Arc::clone(&self.state)))
     }
