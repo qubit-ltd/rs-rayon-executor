@@ -25,6 +25,8 @@ use crate::RayonExecutorServiceStats;
 use crate::internal::Admission;
 use crate::internal::CallableJob;
 use crate::internal::RunnableJob;
+#[cfg(feature = "async-wait")]
+use crate::internal::WakerPanicIsolation;
 use crate::internal::discard_panic_payload;
 use crate::queued_job::QueuedJob;
 use crate::rayon_executor_service_build_error::RayonExecutorServiceBuildError;
@@ -113,8 +115,7 @@ impl RayonExecutorService {
     #[cfg(feature = "async-wait")]
     pub async fn await_termination(&self) {
         let mut receiver = self.state.subscribe_termination();
-        receiver
-            .wait_for(|terminated| *terminated)
+        WakerPanicIsolation::new(receiver.wait_for(|terminated| *terminated))
             .await
             .expect("service state outlives a borrowed termination wait");
     }
@@ -143,11 +144,12 @@ impl RayonExecutorService {
     ///
     /// # Returns
     ///
-    /// A receiver that observes capacity and lifecycle changes.
+    /// A receiver that observes capacity and lifecycle changes while containing
+    /// panics from registered task wakers.
     #[cfg(feature = "async-wait")]
     #[must_use]
     #[inline]
-    pub fn capacity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+    pub fn capacity_changes(&self) -> crate::CapacityChanges {
         self.state.capacity_changes()
     }
 

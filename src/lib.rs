@@ -32,6 +32,10 @@
 //! # Ok::<(), qubit_rayon_executor::RayonExecutorServiceBuildError>(())
 //! ```
 
+#[cfg(feature = "async-wait")]
+mod capacity_changes;
+#[cfg(feature = "async-wait")]
+mod capacity_changes_changed;
 mod internal;
 mod queued_job;
 mod rayon_executor_service;
@@ -41,6 +45,10 @@ mod rayon_executor_service_state;
 mod rayon_executor_service_stats;
 mod rayon_task_handle;
 
+#[cfg(feature = "async-wait")]
+pub use capacity_changes::CapacityChanges;
+#[cfg(feature = "async-wait")]
+pub use capacity_changes_changed::CapacityChangesChanged;
 pub use rayon_executor_service::RayonExecutorService;
 pub use rayon_executor_service_build_error::RayonExecutorServiceBuildError;
 pub use rayon_executor_service_builder::RayonExecutorServiceBuilder;

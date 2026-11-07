@@ -7,6 +7,10 @@
 // =============================================================================
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+#[cfg(feature = "async-wait")]
+use std::panic::AssertUnwindSafe;
+#[cfg(feature = "async-wait")]
+use std::panic::catch_unwind;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -23,6 +27,8 @@ use crate::RayonExecutorServiceStats;
 use crate::internal::Admission;
 use crate::internal::CancelDisposition;
 use crate::internal::RayonExecutorServiceInner;
+#[cfg(feature = "async-wait")]
+use crate::internal::discard_panic_payload;
 use crate::queued_job::QueuedJob;
 
 /// Collection of queued jobs that must be cancelled after releasing the lock.
@@ -89,14 +95,18 @@ impl RayonExecutorServiceState {
         if terminated {
             // Repair stale state after unlocking without waking existing
             // receivers when the terminal value is already published.
-            self.termination_tx.send_if_modified(|current| {
-                if *current {
-                    false
-                } else {
-                    *current = true;
-                    true
-                }
-            });
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                self.termination_tx.send_if_modified(|current| {
+                    if *current {
+                        false
+                    } else {
+                        *current = true;
+                        true
+                    }
+                });
+            })) {
+                discard_panic_payload(payload);
+            }
         }
         receiver
     }
@@ -108,9 +118,9 @@ impl RayonExecutorServiceState {
     /// A receiver that changes when service capacity or lifecycle changes. A
     /// notification is only a hint; callers must retry admission.
     #[cfg(feature = "async-wait")]
-    pub(crate) fn capacity_changes(&self) -> watch::Receiver<u64> {
+    pub(crate) fn capacity_changes(&self) -> crate::CapacityChanges {
         let _inner = self.inner.lock();
-        self.capacity_tx.subscribe()
+        self.capacity_tx.subscribe().into()
     }
 
     /// Returns a consistent snapshot of queue, worker, and lifecycle state.
@@ -378,19 +388,27 @@ impl RayonExecutorServiceState {
     /// * `terminated` - Whether to publish the terminal state.
     #[cfg(feature = "async-wait")]
     fn notify_async_changes(&self, capacity_changed: bool, terminated: bool) {
-        if capacity_changed {
-            self.capacity_tx
-                .send_modify(|generation| *generation = generation.wrapping_add(1));
+        if capacity_changed
+            && let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                self.capacity_tx
+                    .send_modify(|generation| *generation = generation.wrapping_add(1));
+            }))
+        {
+            discard_panic_payload(payload);
         }
-        if terminated {
-            self.termination_tx.send_if_modified(|current| {
-                if *current {
-                    false
-                } else {
-                    *current = true;
-                    true
-                }
-            });
+        if terminated
+            && let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                self.termination_tx.send_if_modified(|current| {
+                    if *current {
+                        false
+                    } else {
+                        *current = true;
+                        true
+                    }
+                });
+            }))
+        {
+            discard_panic_payload(payload);
         }
     }
 
