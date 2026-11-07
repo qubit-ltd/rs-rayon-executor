@@ -88,11 +88,13 @@ callable succeeded. Inspect the `TaskHandle` result for a task error or panic.
 `shutdown` finishes accepted work, while `wait_termination` waits for it to
 reach a terminal state.
 
-Submitting a task consumes its callable even when submission returns
-`Saturated` or `Shutdown`. Keep the inputs needed to retry outside the closure,
-then build a fresh callable for each attempt. For one-shot task values, keep
-shared ownership until submission succeeds or use a retry API designed to
-retain the task.
+The `ExecutorService::submit_callable` method consumes its callable even when
+submission returns `Saturated` or `Shutdown`. For one-shot task values, use the
+inherent `RayonExecutorService::try_submit_callable` method: it returns the same
+callable inside `RejectedTask<C>` if admission fails. Call `into_parts()` to
+recover the reason and callable. Dropping the rejected value drops the callable
+normally. `RejectedTask` is this crate's type and is distinct from the similarly
+named Tokio executor type.
 
 ## Async shutdown and capacity waits
 
@@ -142,37 +144,45 @@ closure that has already started. `stop` still cannot interrupt running CPU
 tasks; if one does not return, the termination wait can continue indefinitely.
 
 For backpressure, subscribe before submitting. After `Saturated`, wait for a
-change and retry with a new callable. Notifications are hints: another
-producer may take the capacity first, and the API makes no FIFO, fairness, or
-finite-wait guarantee. Handle `Shutdown` and a closed notification channel as
-terminal outcomes:
+change and retry the callable returned by `RejectedTask`. Notifications are
+hints: another producer may take the capacity first, and the API makes no FIFO,
+fairness, or finite-wait guarantee. Handle `Shutdown` and a closed
+notification channel as terminal outcomes:
 
 ```rust
 use std::io;
-use std::sync::Arc;
+use std::error::Error;
 
-use qubit_executor::service::{ExecutorService, SubmissionError};
+use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
+
+fn sum_once(values: Box<[usize]>) -> impl FnMut() -> Result<usize, io::Error> + Send + 'static {
+    let mut values = Some(values);
+    move || Ok(values.take().expect("callable runs at most once").iter().copied().sum())
+}
 
 async fn submit_after_capacity(
     service: &RayonExecutorService,
-    values: Vec<usize>,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let values: Arc<[usize]> = values.into();
+    values: Box<[usize]>,
+) -> Result<usize, Box<dyn Error>> {
     let mut changes = service.capacity_changes();
+    let mut task = sum_once(values);
     let handle = loop {
-        let task_values = Arc::clone(&values);
-        match service.submit_callable(move || {
-            Ok::<usize, io::Error>(task_values.iter().copied().sum())
-        }) {
+        match service.try_submit_callable(task) {
             Ok(handle) => break handle,
-            Err(SubmissionError::Saturated) => {
-                if changes.changed().await.is_err() {
-                    return Err("service notification channel closed".into());
+            Err(rejected) => {
+                let (reason, returned_task) = rejected.into_parts();
+                match reason {
+                    qubit_executor::service::SubmissionError::Saturated => {
+                        task = returned_task;
+                        changes.changed().await?;
+                    }
+                    shutdown @ qubit_executor::service::SubmissionError::Shutdown => {
+                        return Err(shutdown.into());
+                    }
+                    error => return Err(error.into()),
                 }
             }
-            Err(SubmissionError::Shutdown) => return Err("service shut down".into()),
-            Err(error) => return Err(error.into()),
         }
     };
     Ok(handle.await?)
@@ -181,7 +191,7 @@ async fn submit_after_capacity(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = RayonExecutorService::builder().num_threads(2).task_capacity(8).build()?;
-    let total = submit_after_capacity(&service, vec![8, 13, 21, 34]).await?;
+    let total = submit_after_capacity(&service, vec![8, 13, 21, 34].into_boxed_slice()).await?;
     assert_eq!(total, 76);
     service.shutdown();
     service.await_termination().await;
@@ -189,7 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The immutable input is shared through `Arc`, so retrying a rejected submission does not copy the whole array. Each attempt owns a shared reference while the retry loop retains the input.
+The one-shot input remains owned by the same callable through saturation and is moved into the pool only after admission succeeds. `rs-execution-services` can use this pattern to replace its CPU `OwnedWaitTask` wrapper; its blocking branch still needs that helper. This guide example uses Tokio to drive async waits and requires the `async-wait` feature described above.
+
+`CapacityChanges::borrow` and `borrow_and_update` return Tokio watch guards that hold a read lock. Use them briefly, copy the generation, and drop the guard immediately. Do not hold a guard across `.await`, termination waits, or calls such as `shutdown`, `stop`, or `cancel` that can publish a notification. Prefer the copying methods `generation` and `generation_and_update` when retaining the value. The generation is a wrapping notification counter, not available capacity or a strict event count, and reading it does not reserve capacity.
 
 `stats()` returns a consistent snapshot sampled under the service state lock.
 Its `queued`, `running`, and `cancelling` counts all consume capacity.

@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `submit_callable` 成功只表示服务接纳了任务，并不表示 callable 已经成功完成。请从 `TaskHandle` 取得结果，以观察任务自己的错误或 panic。`shutdown` 会让已接纳任务完成，`wait_termination` 则等待它们进入终态。
 
-提交任务会消费 callable，即使提交返回 `Saturated` 或 `Shutdown` 也是如此。请在闭包外保留重试所需的输入，并为每次尝试重新构造 callable。对于只能使用一次的任务值，请在提交成功前保留共享所有权，或使用能够保留任务的重试 API。
+`ExecutorService::submit_callable` 即使返回 `Saturated` 或 `Shutdown` 也会消费 callable。对于只能使用一次的任务值，可使用本类型固有方法 `RayonExecutorService::try_submit_callable`：接纳失败时，它会在 `RejectedTask<C>` 中归还同一个 callable。调用 `into_parts()` 可取回原因和 callable；丢弃拒绝值时 callable 按常规析构。本 crate 的 `RejectedTask` 与 Tokio executor 中同名类型彼此独立。
 
 ## 异步关闭与容量等待
 
@@ -102,34 +102,42 @@ async fn stop_without_blocking_runtime(
 
 此示例需要启用 `async-wait` feature 并运行 Tokio runtime（上面的依赖配置已启用 Tokio 的 `rt-multi-thread`）。`?` 会传播 blocking task 在启动前被取消或发生 panic 时的 `JoinError`。丢弃 join future 不会强制终止已经开始运行的 blocking closure。`stop` 仍不会中断正在运行的 CPU 任务；如果任务不返回，终止等待也可能一直持续。
 
-处理背压时，请先订阅，再提交。收到 `Saturated` 后等待变化并使用新 callable 重试。通知只是提示：其他生产者可能先占用容量，而且 API 不保证 FIFO、公平性或有限等待。应将 `Shutdown` 和通知通道关闭视为终止结果：
+处理背压时，请先订阅，再提交。收到 `Saturated` 后等待变化，并重试 `RejectedTask` 归还的 callable。通知只是提示：其他生产者可能先占用容量，而且 API 不保证 FIFO、公平性或有限等待。应将 `Shutdown` 和通知通道关闭视为终止结果：
 
 ```rust
 use std::io;
-use std::sync::Arc;
+use std::error::Error;
 
-use qubit_executor::service::{ExecutorService, SubmissionError};
+use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
+
+fn sum_once(values: Box<[usize]>) -> impl FnMut() -> Result<usize, io::Error> + Send + 'static {
+    let mut values = Some(values);
+    move || Ok(values.take().expect("callable runs at most once").iter().copied().sum())
+}
 
 async fn submit_after_capacity(
     service: &RayonExecutorService,
-    values: Vec<usize>,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let values: Arc<[usize]> = values.into();
+    values: Box<[usize]>,
+) -> Result<usize, Box<dyn Error>> {
     let mut changes = service.capacity_changes();
+    let mut task = sum_once(values);
     let handle = loop {
-        let task_values = Arc::clone(&values);
-        match service.submit_callable(move || {
-            Ok::<usize, io::Error>(task_values.iter().copied().sum())
-        }) {
+        match service.try_submit_callable(task) {
             Ok(handle) => break handle,
-            Err(SubmissionError::Saturated) => {
-                if changes.changed().await.is_err() {
-                    return Err("服务通知通道已关闭".into());
+            Err(rejected) => {
+                let (reason, returned_task) = rejected.into_parts();
+                match reason {
+                    qubit_executor::service::SubmissionError::Saturated => {
+                        task = returned_task;
+                        changes.changed().await?;
+                    }
+                    shutdown @ qubit_executor::service::SubmissionError::Shutdown => {
+                        return Err(shutdown.into());
+                    }
+                    error => return Err(error.into()),
                 }
             }
-            Err(SubmissionError::Shutdown) => return Err("服务已关闭".into()),
-            Err(error) => return Err(error.into()),
         }
     };
     Ok(handle.await?)
@@ -138,7 +146,7 @@ async fn submit_after_capacity(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = RayonExecutorService::builder().num_threads(2).task_capacity(8).build()?;
-    let total = submit_after_capacity(&service, vec![8, 13, 21, 34]).await?;
+    let total = submit_after_capacity(&service, vec![8, 13, 21, 34].into_boxed_slice()).await?;
     assert_eq!(total, 76);
     service.shutdown();
     service.await_termination().await;
@@ -146,7 +154,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-输入通过 `Arc` 共享，每次重试只克隆共享引用，不复制整个数组。即使提交被拒绝、此次闭包被销毁，重试循环仍持有输入。
+饱和时，原任务值仍由同一个 callable 持有；只有接纳成功才会将其移入执行池。`rs-execution-services` 的 CPU 分支可用此循环替代 `OwnedWaitTask` 包装，blocking 分支仍需保留该 helper。此手册示例用 Tokio 驱动异步等待，因此需要启用上方的 `async-wait` feature。
+
+`CapacityChanges::borrow` 和 `borrow_and_update` 返回 Tokio watch guard，并持有读锁。应短时读取、复制 generation 后立即释放 guard。不要跨 `.await`、终止等待，或调用 `shutdown`、`stop`、`cancel` 等可能发布通知的操作持有 guard。需要保留数值时优先使用复制读取方法 `generation` 和 `generation_and_update`。generation 是可回绕的通知代数，不表示可用容量或严格事件数，读取也不会预留容量。
 
 `stats()` 返回在服务状态锁内采样的一致快照。`queued`、`running` 和 `cancelling` 都会占用容量。任务从队列移除后，`cancelling` 仍会统计尚未完成的清理。结果可用与取消清理完成可能存在短暂时间差；观察或收取结果本身不会释放容量。
 
