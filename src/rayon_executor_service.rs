@@ -49,6 +49,11 @@ use crate::rayon_task_handle::RayonTaskHandle;
 /// includes that task finishing. Coordinate results and shutdown outside the
 /// pool, or use Rayon `join` or `scope` for suitable computations.
 ///
+/// Clones share the same pool and lifecycle. Calling `shutdown` or `stop` on
+/// any clone ends admission for every clone. Dropping a clone does not shut
+/// down, stop, or join the service; explicitly coordinate shutdown and
+/// termination when completion must be guaranteed.
+///
 /// # Examples
 ///
 /// ```

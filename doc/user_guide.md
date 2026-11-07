@@ -25,6 +25,17 @@ caller -> bounded accepted-task capacity -> Rayon pool -> task handle
                                       \-> Saturated when capacity is full
 ```
 
+Clones share the same pool and lifecycle. Calling `shutdown` or `stop` through
+any clone ends admission for all clones. Dropping a clone does not implicitly
+shut down, stop, or join the service. When completion must be guaranteed,
+coordinate an explicit `shutdown` or `stop` and wait for termination.
+
+An accepted task must not synchronously wait for its own service to terminate.
+Termination includes every accepted task finishing, so the task and the
+termination wait depend on each other. Idle workers do not break this cycle,
+and calling `shutdown` first does not break it either. Coordinate task results
+and service termination outside the task.
+
 ## Scenario: Isolate a CPU Aggregation
 
 An application must aggregate values without competing with its other execution
