@@ -31,6 +31,11 @@ async fn test_rayon_await_termination_waits_for_shutdown() {
     timeout(Duration::from_secs(10), service.await_termination())
         .await
         .expect("repeated termination wait should complete");
+    timeout(Duration::from_secs(10), async {
+        tokio::join!(service.await_termination(), service.await_termination())
+    })
+    .await
+    .expect("multiple late termination waiters should complete");
 }
 
 #[tokio::test]
@@ -122,4 +127,6 @@ async fn test_rayon_await_termination_after_stop_cancels_queued_task() {
     timeout(Duration::from_secs(10), wait)
         .await
         .expect("stopped service should terminate");
+    let stats = service.stats();
+    assert_eq!((stats.queued, stats.running, stats.cancelling), (0, 0, 0));
 }
