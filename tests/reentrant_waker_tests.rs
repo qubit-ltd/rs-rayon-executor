@@ -9,9 +9,12 @@
 
 use std::future::Future;
 use std::io;
-use std::process::{Command, Stdio};
+use std::pin::Pin;
+use std::process::Command;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::Wake;
 use std::time::Duration;
@@ -25,6 +28,18 @@ struct ReentrantWake {
     fired: AtomicBool,
     action: &'static str,
     fired_tx: std::sync::mpsc::Sender<()>,
+}
+
+struct CountWake(AtomicUsize);
+
+impl Wake for CountWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl Wake for ReentrantWake {
@@ -56,7 +71,7 @@ impl Wake for ReentrantWake {
 }
 
 #[test]
-fn reentrant_waker_watchdog() {
+fn test_reentrant_waker_reentry_completes() {
     if let Some(case) = std::env::var_os("RXE_REENTRANT_CASE") {
         run_case(case.to_string_lossy().as_ref());
         return;
@@ -72,14 +87,11 @@ fn reentrant_waker_watchdog() {
         })
         .collect::<Vec<_>>()
         .into_iter()
-        .chain([
-            "completion-control-stats".to_owned(),
-            "queued-control-stats".to_owned(),
-        ])
+        .chain(["completion-control-stats".to_owned(), "queued-control-stats".to_owned()])
         .collect::<Vec<_>>();
     for case in cases {
         let mut child = Command::new(std::env::current_exe().expect("test executable path"))
-            .args(["--exact", "reentrant_waker_watchdog", "--nocapture"])
+            .args(["--exact", "test_reentrant_waker_reentry_completes", "--nocapture"])
             .env("RXE_REENTRANT_CASE", &case)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -88,9 +100,7 @@ fn reentrant_waker_watchdog() {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = child.try_wait().expect("child status should be readable") {
-                let output = child
-                    .wait_with_output()
-                    .expect("child output should be readable");
+                let output = child.wait_with_output().expect("child output should be readable");
                 assert!(
                     status.success(),
                     "child case {case} failed: {status}\n{}\n{}",
@@ -114,6 +124,31 @@ fn reentrant_waker_watchdog() {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+#[test]
+fn test_late_termination_subscriber_does_not_rewake_existing_waiter() {
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .build()
+        .expect("service should build");
+    let count = Arc::new(CountWake(AtomicUsize::new(0)));
+    let waker = std::task::Waker::from(Arc::clone(&count));
+    let mut cx = std::task::Context::from_waker(&waker);
+    let mut first = Box::pin(service.await_termination());
+    assert!(Future::poll(first.as_mut(), &mut cx).is_pending());
+
+    service.shutdown();
+    let wakes_after_termination = count.0.load(Ordering::SeqCst);
+    assert!(wakes_after_termination > 0, "termination should wake the first waiter");
+
+    let mut late = Box::pin(service.await_termination());
+    assert!(Future::poll(late.as_mut(), &mut cx).is_ready());
+    assert_eq!(
+        count.0.load(Ordering::SeqCst),
+        wakes_after_termination,
+        "late subscription must not republish an already-published terminal value"
+    );
 }
 
 fn run_case(case: &str) {
@@ -141,15 +176,18 @@ fn run_case(case: &str) {
         fired_tx,
     }));
     let mut cx = std::task::Context::from_waker(&waker);
+    let mut waiter: Option<Pin<Box<dyn Future<Output = ()> + '_>>>;
     match signal {
         "capacity" => {
             let mut receiver = service.capacity_changes();
-            let mut changes = Box::pin(receiver.changed());
-            assert!(Future::poll(changes.as_mut(), &mut cx).is_pending());
+            waiter = Some(Box::pin(async move {
+                receiver.changed().await.expect("capacity watch should remain open");
+            }));
+            assert!(Future::poll(waiter.as_mut().unwrap().as_mut(), &mut cx).is_pending());
         }
         "termination" => {
-            let mut wait = Box::pin(service.await_termination());
-            assert!(Future::poll(wait.as_mut(), &mut cx).is_pending());
+            waiter = Some(Box::pin(service.await_termination()));
+            assert!(Future::poll(waiter.as_mut().unwrap().as_mut(), &mut cx).is_pending());
         }
         "completion" | "queued" => {
             let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -167,8 +205,10 @@ fn run_case(case: &str) {
                 .recv_timeout(Duration::from_secs(4))
                 .expect("blocker should start");
             let mut receiver = service.capacity_changes();
-            let mut changes = Box::pin(receiver.changed());
-            assert!(Future::poll(changes.as_mut(), &mut cx).is_pending());
+            waiter = Some(Box::pin(async move {
+                receiver.changed().await.expect("capacity watch should remain open");
+            }));
+            assert!(Future::poll(waiter.as_mut().unwrap().as_mut(), &mut cx).is_pending());
             if signal == "completion" {
                 release_tx.send(()).expect("blocker should be released");
             } else {
@@ -181,19 +221,14 @@ fn run_case(case: &str) {
             fired_rx
                 .recv_timeout(Duration::from_secs(4))
                 .expect("capacity wake should reenter and finish");
+            assert!(Future::poll(waiter.as_mut().unwrap().as_mut(), &mut cx).is_ready());
             service.shutdown();
             let deadline = std::time::Instant::now() + Duration::from_secs(4);
             while service.stats().running != 0 {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "blocker should complete"
-                );
+                assert!(std::time::Instant::now() < deadline, "blocker should complete");
                 std::thread::yield_now();
             }
-            assert!(
-                service.is_terminated(),
-                "controlled work should be complete"
-            );
+            assert!(service.is_terminated(), "controlled work should be complete");
             return;
         }
         _ => panic!("unknown signal in child case: {case}"),
@@ -205,4 +240,8 @@ fn run_case(case: &str) {
         }
         _ => panic!("unknown trigger in child case: {case}"),
     }
+    fired_rx
+        .recv_timeout(Duration::from_secs(4))
+        .expect("watch notification should invoke the reentrant callback");
+    assert!(Future::poll(waiter.as_mut().unwrap().as_mut(), &mut cx).is_ready());
 }

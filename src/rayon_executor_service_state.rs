@@ -87,7 +87,16 @@ impl RayonExecutorServiceState {
             inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(&inner) == 0
         };
         if terminated {
-            self.termination_tx.send_replace(true);
+            // Repair stale state after unlocking without waking existing
+            // receivers when the terminal value is already published.
+            self.termination_tx.send_if_modified(|current| {
+                if *current {
+                    false
+                } else {
+                    *current = true;
+                    true
+                }
+            });
         }
         receiver
     }
@@ -362,6 +371,11 @@ impl RayonExecutorServiceState {
     ///
     /// Watch publication may invoke a receiver's waker synchronously. Keeping
     /// it outside `inner` allows a waker to safely call back into the service.
+    ///
+    /// # Parameters
+    ///
+    /// * `capacity_changed` - Whether to advance the capacity generation.
+    /// * `terminated` - Whether to publish the terminal state.
     #[cfg(feature = "async-wait")]
     fn notify_async_changes(&self, capacity_changed: bool, terminated: bool) {
         if capacity_changed {
@@ -381,6 +395,11 @@ impl RayonExecutorServiceState {
     }
 
     /// Does nothing when asynchronous state notifications are disabled.
+    ///
+    /// # Parameters
+    ///
+    /// * `capacity_changed` - Whether capacity changed.
+    /// * `terminated` - Whether the service terminated.
     #[cfg(not(feature = "async-wait"))]
     fn notify_async_changes(&self, _capacity_changed: bool, _terminated: bool) {}
 
