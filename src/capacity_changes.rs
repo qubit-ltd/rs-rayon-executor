@@ -43,13 +43,47 @@ impl CapacityChanges {
     }
 
     /// Reads the current generation without marking it as seen.
+    ///
+    /// The returned watch guard holds a read lock. Keep it short lived: copy
+    /// the value and drop the guard before awaiting, waiting for termination,
+    /// or calling an operation such as shutdown, stop, or cancel that may
+    /// publish a notification.
+    /// Holding the guard across such an operation can block that operation
+    /// indefinitely. The generation is a wrapping notification token, not a
+    /// count of available capacity.
     pub fn borrow(&self) -> watch::Ref<'_, u64> {
         self.receiver.borrow()
     }
 
     /// Reads the current generation and marks it as seen.
+    ///
+    /// The returned watch guard holds a read lock. Keep it short lived: copy
+    /// the value and drop the guard before awaiting, waiting for termination,
+    /// or calling an operation such as shutdown, stop, or cancel that may
+    /// publish a notification.
+    /// Holding the guard across such an operation can block that operation
+    /// indefinitely. The generation is a wrapping notification token, not a
+    /// count of available capacity.
     pub fn borrow_and_update(&mut self) -> watch::Ref<'_, u64> {
         self.receiver.borrow_and_update()
+    }
+
+    /// Returns a copied notification generation without marking it as seen.
+    ///
+    /// The generation is a wrapping notification token, not a count of
+    /// available capacity. A notification does not guarantee that a capacity
+    /// slot will still be available when a task is submitted.
+    pub fn generation(&self) -> u64 {
+        *self.receiver.borrow()
+    }
+
+    /// Returns a copied notification generation and marks it as seen.
+    ///
+    /// The generation is a wrapping notification token, not a count of
+    /// available capacity. A notification does not guarantee that a capacity
+    /// slot will still be available when a task is submitted.
+    pub fn generation_and_update(&mut self) -> u64 {
+        *self.receiver.borrow_and_update()
     }
 
     /// Returns whether the underlying channel is closed.
