@@ -17,6 +17,29 @@ use crate::CapacityChangesChanged;
 /// Notifications are advisory; callers must retry submission because another
 /// producer may consume an available slot first. Panics from a registered
 /// waker are contained so they cannot interrupt notification of other waiters.
+///
+/// This type is available with the `async-wait` feature.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_executor::service::ExecutorService;
+/// use qubit_rayon_executor::RayonExecutorService;
+///
+/// let service = RayonExecutorService::builder().num_threads(1).build()?;
+/// let mut changes = service.capacity_changes();
+/// let initial = changes.generation();
+/// assert!(!changes.has_changed()?);
+/// service.shutdown();
+/// assert!(changes.has_changed()?);
+/// let current = changes.generation_and_update();
+/// assert_ne!(initial, current);
+/// assert!(!changes.has_changed()?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// See the [user guide](https://github.com/qubit-ltd/rs-rayon-executor/blob/main/doc/user_guide.md)
+/// for the capacity notification workflow.
 #[derive(Clone)]
 pub struct CapacityChanges {
     /// Tokio watch receiver wrapped to isolate task waker panics.

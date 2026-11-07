@@ -14,6 +14,30 @@ use qubit_executor::service::SubmissionError;
 /// The original callable is retained so it can be retried or handled by the
 /// caller. Formatting this value never formats the callable or its captures.
 ///
+/// # Examples
+///
+/// ```
+/// use std::convert::Infallible;
+/// use qubit_executor::service::{ExecutorService, SubmissionError};
+/// use qubit_function::Callable;
+/// use qubit_rayon_executor::RayonExecutorService;
+///
+/// let service = RayonExecutorService::builder().num_threads(1).build()?;
+/// service.shutdown();
+/// let rejected = match service.try_submit_callable(|| Ok::<usize, Infallible>(17)) {
+///     Err(rejected) => rejected,
+///     Ok(_) => panic!("shutdown service must reject submission"),
+/// };
+/// assert_eq!(rejected.reason(), &SubmissionError::Shutdown);
+/// let (reason, mut task) = rejected.into_parts();
+/// assert_eq!(reason, SubmissionError::Shutdown);
+/// assert_eq!(task.call(), Ok(17));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// See the [user guide](https://github.com/qubit-ltd/rs-rayon-executor/blob/main/doc/user_guide.md)
+/// for the complete retry workflow.
+///
 /// # Type Parameters
 ///
 /// * `T` - The rejected callable retained for the caller.

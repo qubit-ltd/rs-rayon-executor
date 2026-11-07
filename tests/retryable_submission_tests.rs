@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
+use std::time::Instant;
 
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
@@ -75,7 +76,20 @@ fn test_saturated_rejection_returns_same_callable_and_it_can_be_retried() {
 
     release_tx.send(()).unwrap();
     blocker.get().unwrap();
-    let result = service.try_submit_callable(task).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut task = task;
+    let result = loop {
+        match service.try_submit_callable(task) {
+            Ok(handle) => break handle,
+            Err(rejected) => {
+                let (reason, returned_task) = rejected.into_parts();
+                assert_eq!(reason, SubmissionError::Saturated);
+                assert!(Instant::now() < deadline, "capacity did not recover within 10 seconds");
+                task = returned_task;
+                std::thread::yield_now();
+            }
+        }
+    };
     service.shutdown();
     assert!(service.wait_termination_timeout(Duration::from_secs(10)));
     assert_eq!(result.get().unwrap(), 17);
