@@ -5,9 +5,9 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-mod common;
+mod documentation_examples;
 
 #[test]
 fn test_documentation_examples_compile_and_run() {
-    common::documentation_examples::check_all_documents();
+    documentation_examples::check_all_documents();
 }

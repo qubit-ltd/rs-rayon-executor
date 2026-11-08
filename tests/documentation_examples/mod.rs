@@ -65,10 +65,7 @@ fn parse_document(path: &'static str, source: &str) -> Result<Document, String> 
         if active.is_none()
             && let Some(rest) = trimmed.strip_prefix('#')
         {
-            let level = trimmed
-                .chars()
-                .take_while(|character| *character == '#')
-                .count();
+            let level = trimmed.chars().take_while(|character| *character == '#').count();
             if level > 0 && trimmed[level..].starts_with(' ') {
                 headings.truncate(level - 1);
                 headings.push(rest.trim().to_owned());
@@ -96,9 +93,7 @@ fn parse_document(path: &'static str, source: &str) -> Result<Document, String> 
         }
     }
     if let Some((language, start, heading, _)) = active {
-        return Err(format!(
-            "{path}:{start}: unclosed {language} fence under {heading}"
-        ));
+        return Err(format!("{path}:{start}: unclosed {language} fence under {heading}"));
     }
     let rust_blocks: Vec<Block> = blocks
         .iter()
@@ -140,9 +135,7 @@ fn classify_roles(
 ) -> Result<BTreeMap<Role, Block>, String> {
     if rust_blocks.len() != expected {
         let block = rust_blocks.get(expected);
-        let (line, heading) = block.map_or((1, "document end"), |block| {
-            (block.line, block.heading.as_str())
-        });
+        let (line, heading) = block.map_or((1, "document end"), |block| (block.line, block.heading.as_str()));
         return Err(format!(
             "{path}:{line}: Rust example inventory mismatch under {heading:?}; found {} blocks but requires exactly {expected}",
             rust_blocks.len()
@@ -182,23 +175,12 @@ fn is_rust(language: &str) -> bool {
 fn test_parser_rejects_missing_unknown_unclosed_and_duplicate_roles() {
     let valid = "# Quick Start\n```rust\nfn main() {}\n```\n";
     let missing = parse_document("README.md", "# Guide\n").expect_err("missing role must fail");
-    assert!(
-        missing.contains("README.md:")
-            && missing.contains("inventory")
-            && missing.contains("document end")
-    );
-    let extra = parse_document(
-        "README.md",
-        &format!("{valid}\n```rust\nfn extra() {{}}\n```\n"),
-    )
-    .expect_err("unknown Rust example must fail");
-    assert!(
-        extra.contains("README.md:")
-            && extra.contains("found 2 blocks")
-            && extra.contains("Quick Start")
-    );
-    let unclosed = parse_document("README.md", "# Guide\n```rust\nfn main() {}\n")
-        .expect_err("unclosed fence must fail");
+    assert!(missing.contains("README.md:") && missing.contains("inventory") && missing.contains("document end"));
+    let extra = parse_document("README.md", &format!("{valid}\n```rust\nfn extra() {{}}\n```\n"))
+        .expect_err("unknown Rust example must fail");
+    assert!(extra.contains("README.md:") && extra.contains("found 2 blocks") && extra.contains("Quick Start"));
+    let unclosed =
+        parse_document("README.md", "# Guide\n```rust\nfn main() {}\n").expect_err("unclosed fence must fail");
     assert!(unclosed.contains("README.md:") && unclosed.contains("unclosed rust fence"));
     let parsed = parse_document("README.md", valid).expect("single role inventory should parse");
     let block = parsed.rust[&Role::ReadmeMinimum].clone();
@@ -206,12 +188,10 @@ fn test_parser_rejects_missing_unknown_unclosed_and_duplicate_roles() {
         (0, Role::ReadmeMinimum, "Quick Start"),
         (0, Role::ReadmeMinimum, "Quick Start"),
     ];
-    let duplicate = classify_roles("README.md", &[block], 1, &duplicate_roles)
-        .expect_err("duplicate role inventory must fail");
+    let duplicate =
+        classify_roles("README.md", &[block], 1, &duplicate_roles).expect_err("duplicate role inventory must fail");
     assert!(
-        duplicate.contains("README.md:")
-            && duplicate.contains("Quick Start")
-            && duplicate.contains("duplicate role")
+        duplicate.contains("README.md:") && duplicate.contains("Quick Start") && duplicate.contains("duplicate role")
     );
 }
 
@@ -225,8 +205,8 @@ pub(crate) fn check_all_documents() {
     let docs: Vec<Document> = paths
         .iter()
         .map(|path| {
-            let source = fs::read_to_string(path)
-                .unwrap_or_else(|error| panic!("{path}: cannot read document: {error}"));
+            let source =
+                fs::read_to_string(path).unwrap_or_else(|error| panic!("{path}: cannot read document: {error}"));
             parse_document(path, &source).unwrap_or_else(|error| panic!("{error}"))
         })
         .collect();
@@ -254,11 +234,7 @@ fn check_document(doc: Document) {
                 block.code
             )
         } else if role == Role::CapacityRetry {
-            let helpers = block
-                .code
-                .split("#[tokio::main]")
-                .next()
-                .unwrap_or(&block.code);
+            let helpers = block.code.split("#[tokio::main]").next().unwrap_or(&block.code);
             format!(
                 "{helpers}\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {{\n    use std::time::Duration;\n    let service = RayonExecutorService::builder().num_threads(1).task_capacity(1).build()?;\n    let (started_tx, started_rx) = std::sync::mpsc::channel();\n    let (release_tx, release_rx) = std::sync::mpsc::channel();\n    let blocker = service.try_submit_callable(move || {{ started_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(10)).unwrap(); Ok::<(), std::io::Error>(()) }}).unwrap();\n    started_rx.recv_timeout(Duration::from_secs(10))?;\n    let waiting = submit_after_capacity(&service, vec![8, 13, 21, 34].into_boxed_slice());\n    tokio::pin!(waiting);\n    let was_pending = std::future::poll_fn(|cx| std::task::Poll::Ready(matches!(std::future::Future::poll(waiting.as_mut(), cx), std::task::Poll::Pending))).await;\n    assert!(was_pending, \"saturated submission should wait before capacity is released\");\n    release_tx.send(())?;\n    blocker.await?;\n    assert_eq!(waiting.await?, 76);\n    service.shutdown(); service.await_termination().await; Ok(())\n}}\n"
             )
@@ -280,8 +256,7 @@ struct Fixture {
 impl Fixture {
     fn new(asynchronous: bool) -> Self {
         let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("rre-doc-examples-{}-{id}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("rre-doc-examples-{}-{id}", std::process::id()));
         fs::create_dir_all(root.join("src/bin")).expect("create temporary documentation fixture");
         Self {
             target: root.join("target"),
@@ -300,9 +275,7 @@ impl Fixture {
                 blocks
                     .iter()
                     .find(|block| block.language == "toml" && block.code.contains("async-wait"))
-                    .unwrap_or_else(|| {
-                        panic!("{source_path}: async role has no documented async-wait TOML block")
-                    }),
+                    .unwrap_or_else(|| panic!("{source_path}: async role has no documented async-wait TOML block")),
             )
         } else {
             None
@@ -322,9 +295,7 @@ impl Fixture {
             let config = blocks
                 .iter()
                 .find(|block| block.language == "toml" && block.code.contains("tokio ="))
-                .unwrap_or_else(|| {
-                    panic!("{source_path}: async role has no documented Tokio dependency")
-                });
+                .unwrap_or_else(|| panic!("{source_path}: async role has no documented Tokio dependency"));
             config
                 .code
                 .lines()
@@ -343,8 +314,7 @@ impl Fixture {
     }
 
     fn write_bin(&self, name: &str, source: &str) {
-        fs::write(self.root.join("src/bin").join(format!("{name}.rs")), source)
-            .expect("write extracted example");
+        fs::write(self.root.join("src/bin").join(format!("{name}.rs")), source).expect("write extracted example");
     }
 
     fn run_cargo(&self, document: &str, role: Role, heading: &str, line: usize, bin: &str) {
@@ -379,13 +349,7 @@ impl Drop for Fixture {
     }
 }
 
-fn run_bounded(
-    mut command: Command,
-    document: &str,
-    role: Role,
-    heading: &str,
-    line: usize,
-) -> Output {
+fn run_bounded(mut command: Command, document: &str, role: Role, heading: &str, line: usize) -> Output {
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -412,9 +376,7 @@ fn run_bounded(
         }
         if start.elapsed() >= TIMEOUT {
             let _ = child.kill();
-            let output = child
-                .wait_with_output()
-                .expect("collect timed-out cargo output");
+            let output = child.wait_with_output().expect("collect timed-out cargo output");
             panic!(
                 "{document}:{line} ({heading}) {} exceeded {} seconds\nstderr:\n{}",
                 role.name(),
@@ -438,12 +400,9 @@ fn dependency_version(toml: &str, name: &str, document: &str) -> String {
                     .split(',')
                     .find_map(|field| {
                         let (field, value) = field.split_once('=')?;
-                        (field.trim().trim_start_matches('{').trim() == "version")
-                            .then_some(value.trim())
+                        (field.trim().trim_start_matches('{').trim() == "version").then_some(value.trim())
                     })
-                    .unwrap_or_else(|| {
-                        panic!("{document}: documented {name} dependency has no version")
-                    })
+                    .unwrap_or_else(|| panic!("{document}: documented {name} dependency has no version"))
             } else {
                 version_value
             };
