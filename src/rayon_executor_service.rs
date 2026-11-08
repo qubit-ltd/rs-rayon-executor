@@ -77,8 +77,11 @@ impl RayonExecutorService {
     /// Tries to submit a callable, returning the original callable on
     /// rejection.
     ///
-    /// Shutdown takes precedence over saturation. The callable is never run or
-    /// dropped when rejected; its owner is returned in [`RejectedTask`].
+    /// Shutdown takes precedence over saturation. If the service exhausts its
+    /// internal unique task identifiers, it stops accepting work and returns
+    /// [`SubmissionError::Shutdown`]; already accepted work may still finish.
+    /// The callable is never run or dropped when rejected; its owner is
+    /// returned in [`RejectedTask`].
     ///
     /// # Type Parameters
     ///

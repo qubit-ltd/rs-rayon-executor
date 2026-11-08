@@ -8,7 +8,7 @@
 /// A reserved task admission and the number of Rayon closures to dispatch.
 pub(crate) struct Admission {
     /// Stable task identifier assigned to the accepted task.
-    pub(crate) task_id: usize,
+    pub(crate) task_id: u64,
     /// Number of worker closures the caller must dispatch.
     pub(crate) dispatch_count: usize,
 }

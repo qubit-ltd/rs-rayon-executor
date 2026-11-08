@@ -20,16 +20,17 @@ pub(crate) struct RayonExecutorServiceInner {
     pub(crate) task_capacity: usize,
     /// Maximum number of Rayon worker closures scheduled at once.
     pub(crate) num_threads: usize,
-    /// Identifier assigned to the next accepted task.
-    pub(crate) next_task_id: usize,
+    /// Next unused identifier, or `None` after the identifier space is
+    /// exhausted.
+    pub(crate) next_task_id: Option<u64>,
     /// Number of jobs currently running user code.
     pub(crate) running: usize,
     /// Identifiers of jobs currently owned by Rayon workers.
-    pub(crate) running_tasks: BTreeSet<usize>,
+    pub(crate) running_tasks: BTreeSet<u64>,
     /// Number of Rayon closures currently scheduled for queued work.
     pub(crate) scheduled: usize,
     /// Pending jobs indexed by their stable task identifiers.
-    pub(crate) queue: BTreeMap<usize, Box<dyn QueuedJob>>,
+    pub(crate) queue: BTreeMap<u64, Box<dyn QueuedJob>>,
     /// Task identifiers whose job is being cancelled outside the mutex.
-    pub(crate) cancelling: BTreeSet<usize>,
+    pub(crate) cancelling: BTreeSet<u64>,
 }

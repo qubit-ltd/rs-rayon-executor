@@ -32,7 +32,7 @@ use crate::internal::discard_panic_payload;
 use crate::queued_job::QueuedJob;
 
 /// Collection of queued jobs that must be cancelled after releasing the lock.
-type OwnedQueuedJobs = Vec<(usize, Box<dyn QueuedJob>)>;
+type OwnedQueuedJobs = Vec<(u64, Box<dyn QueuedJob>)>;
 
 /// Shared state for the Rayon executor service.
 pub(crate) struct RayonExecutorServiceState {
@@ -65,7 +65,7 @@ impl RayonExecutorServiceState {
                 lifecycle: ExecutorServiceLifecycle::Running,
                 task_capacity,
                 num_threads,
-                next_task_id: 0,
+                next_task_id: Some(0),
                 running: 0,
                 running_tasks: BTreeSet::new(),
                 scheduled: 0,
@@ -165,7 +165,8 @@ impl RayonExecutorServiceState {
     ///
     /// # Returns
     ///
-    /// `true` once graceful shutdown or stop has begun.
+    /// `true` once graceful shutdown, stop, or task identifier exhaustion has
+    /// begun.
     #[must_use]
     pub(crate) fn is_not_running(&self) -> bool {
         self.inner.lock().lifecycle != ExecutorServiceLifecycle::Running
@@ -178,7 +179,8 @@ impl RayonExecutorServiceState {
     ///
     /// # Errors
     ///
-    /// Returns [`SubmissionError::Shutdown`] when not running and
+    /// Returns [`SubmissionError::Shutdown`] when not running or when all
+    /// unique task identifiers have been used, and
     /// [`SubmissionError::Saturated`] when the accepted-task limit is reached.
     ///
     /// # Parameters
@@ -193,11 +195,18 @@ impl RayonExecutorServiceState {
         if inner.lifecycle != ExecutorServiceLifecycle::Running {
             return Err((SubmissionError::Shutdown, job));
         }
+        if inner.next_task_id.is_none() {
+            inner.lifecycle = ExecutorServiceLifecycle::ShuttingDown;
+            let terminated = self.notify_if_terminated_locked(&inner);
+            drop(inner);
+            self.notify_async_changes(true, terminated);
+            return Err((SubmissionError::Shutdown, job));
+        }
         if occupied(&inner) >= inner.task_capacity {
             return Err((SubmissionError::Saturated, job));
         }
-        let task_id = inner.next_task_id;
-        inner.next_task_id = inner.next_task_id.checked_add(1).expect("task id exhausted");
+        let task_id = inner.next_task_id.expect("exhaustion handled before capacity check");
+        inner.next_task_id = task_id.checked_add(1);
         job.accept();
         let job: Box<dyn QueuedJob> = job;
         inner.queue.insert(task_id, job);
@@ -216,7 +225,7 @@ impl RayonExecutorServiceState {
     ///
     /// The oldest queued job, or `None` when a previously scheduled closure
     /// finds no work and releases its scheduling reservation.
-    pub(crate) fn take_next(&self) -> Option<(usize, Box<dyn QueuedJob>)> {
+    pub(crate) fn take_next(&self) -> Option<(u64, Box<dyn QueuedJob>)> {
         let mut inner = self.inner.lock();
         let Some((task_id, job)) = inner.queue.pop_first() else {
             inner.scheduled = inner.scheduled.saturating_sub(1);
@@ -239,7 +248,7 @@ impl RayonExecutorServiceState {
     /// # Returns
     ///
     /// `true` while a worker owns the task, and `false` otherwise.
-    pub(crate) fn is_running_task(&self, task_id: usize) -> bool {
+    pub(crate) fn is_running_task(&self, task_id: u64) -> bool {
         self.inner.lock().running_tasks.contains(&task_id)
     }
 
@@ -254,7 +263,7 @@ impl RayonExecutorServiceState {
     ///
     /// `true` when queued work needs the same worker reservation to run next.
     #[must_use]
-    pub(crate) fn finish_running(&self, task_id: usize) -> bool {
+    pub(crate) fn finish_running(&self, task_id: u64) -> bool {
         let mut inner = self.inner.lock();
         inner.running_tasks.remove(&task_id);
         inner.running = inner.running.saturating_sub(1);
@@ -280,7 +289,7 @@ impl RayonExecutorServiceState {
     /// The ownership disposition that tells the caller whether it must cancel
     /// a queued job after releasing the mutex.
     #[must_use]
-    pub(crate) fn cancel_pending_task(&self, task_id: usize) -> CancelDisposition {
+    pub(crate) fn cancel_pending_task(&self, task_id: u64) -> CancelDisposition {
         let mut inner = self.inner.lock();
         if let Some(job) = inner.queue.remove(&task_id) {
             inner.cancelling.insert(task_id);
@@ -301,7 +310,7 @@ impl RayonExecutorServiceState {
     /// # Parameters
     ///
     /// * `task_id` - Identifier of the job whose cleanup has completed.
-    pub(crate) fn finish_cancelling(&self, task_id: usize) {
+    pub(crate) fn finish_cancelling(&self, task_id: u64) {
         let mut inner = self.inner.lock();
         inner.cancelling.remove(&task_id);
         let terminated = self.notify_if_terminated_locked(&inner);
@@ -449,4 +458,193 @@ impl RayonExecutorServiceState {
 /// * `inner` - Service state containing queued, running, and cancelling tasks.
 fn occupied(inner: &RayonExecutorServiceInner) -> usize {
     inner.queue.len() + inner.running + inner.cancelling.len()
+}
+
+#[cfg(test)]
+mod task_id_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use super::Admission;
+    use super::CancelDisposition;
+    use super::ExecutorServiceLifecycle;
+    use super::QueuedJob;
+    use super::RayonExecutorServiceState;
+    use super::SubmissionError;
+
+    #[derive(Debug)]
+    struct TestJob(Option<Arc<AtomicUsize>>);
+
+    impl Drop for TestJob {
+        fn drop(&mut self) {
+            if let Some(drops) = &self.0 {
+                drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    impl QueuedJob for TestJob {
+        fn accept(&self) {}
+
+        fn run(self: Box<Self>) {}
+
+        fn cancel(self: Box<Self>) {}
+    }
+
+    fn job() -> Box<TestJob> {
+        Box::new(TestJob(None))
+    }
+
+    fn admit(state: &RayonExecutorServiceState, job: Box<TestJob>) -> Admission {
+        match state.admit(job) {
+            Ok(admission) => admission,
+            Err(_) => panic!("test job should be accepted"),
+        }
+    }
+
+    fn reject(state: &RayonExecutorServiceState, job: Box<TestJob>) -> (SubmissionError, Box<TestJob>) {
+        match state.admit(job) {
+            Err(rejected) => rejected,
+            Ok(_) => panic!("test job should be rejected"),
+        }
+    }
+
+    #[test]
+    fn test_task_id_crosses_u32_boundary_without_reusing_ids() {
+        let state = RayonExecutorServiceState::new(2, 1);
+        state.inner.lock().next_task_id = Some(u64::from(u32::MAX) - 1);
+
+        let first = admit(&state, job());
+        let second = admit(&state, job());
+
+        assert_eq!(first.task_id, u64::from(u32::MAX) - 1);
+        assert_eq!(second.task_id, u64::from(u32::MAX));
+        assert_ne!(first.task_id, second.task_id);
+        assert_eq!(state.inner.lock().next_task_id, Some(u64::from(u32::MAX) + 1));
+    }
+
+    #[test]
+    fn test_task_id_u64_max_is_admitted_once_then_shutdown_returns_job() {
+        let state = RayonExecutorServiceState::new(1, 1);
+        let drops = Arc::new(AtomicUsize::new(0));
+        state.inner.lock().next_task_id = Some(u64::MAX);
+
+        let last = admit(&state, Box::new(TestJob(None)));
+        assert_eq!(last.task_id, u64::MAX);
+        assert_eq!(state.inner.lock().next_task_id, None);
+
+        let rejected = reject(&state, Box::new(TestJob(Some(Arc::clone(&drops)))));
+        assert_eq!(rejected.0, SubmissionError::Shutdown);
+        assert_eq!(state.lifecycle(), ExecutorServiceLifecycle::ShuttingDown);
+        assert_eq!(drops.load(Ordering::SeqCst), 0, "rejected job remains owned by caller");
+        drop(rejected.1);
+        assert_eq!(
+            drops.load(Ordering::SeqCst),
+            1,
+            "caller drop destroys rejected job once"
+        );
+
+        let (_, accepted) = state.take_next().expect("last accepted job remains queued");
+        accepted.run();
+        assert!(!state.finish_running(last.task_id));
+        assert_eq!(state.lifecycle(), ExecutorServiceLifecycle::Terminated);
+    }
+
+    #[test]
+    fn test_task_id_exhaustion_precedes_saturation_and_terminates_idle_service() {
+        let full = RayonExecutorServiceState::new(1, 1);
+        admit(&full, job());
+        full.inner.lock().next_task_id = None;
+        let rejected = reject(&full, job());
+        assert_eq!(rejected.0, SubmissionError::Shutdown);
+        drop(rejected.1);
+        assert_eq!(full.lifecycle(), ExecutorServiceLifecycle::ShuttingDown);
+
+        let idle = RayonExecutorServiceState::new(1, 1);
+        idle.inner.lock().next_task_id = None;
+        let rejected = reject(&idle, job());
+        assert_eq!(rejected.0, SubmissionError::Shutdown);
+        drop(rejected.1);
+        assert_eq!(idle.lifecycle(), ExecutorServiceLifecycle::Terminated);
+        assert!(idle.wait_for_termination_timeout(Duration::ZERO));
+    }
+
+    #[test]
+    fn test_task_id_cancellation_of_old_handle_does_not_remove_later_job() {
+        let state = RayonExecutorServiceState::new(2, 1);
+        state.inner.lock().next_task_id = Some(41);
+        let old = admit(&state, job());
+        let CancelDisposition::Owned(removed) = state.cancel_pending_task(old.task_id) else {
+            panic!("old pending job should be removable");
+        };
+        drop(removed);
+        state.finish_cancelling(old.task_id);
+
+        let new = admit(&state, job());
+        assert_ne!(old.task_id, new.task_id);
+        assert!(matches!(
+            state.cancel_pending_task(old.task_id),
+            CancelDisposition::Absent
+        ));
+        assert!(state.inner.lock().queue.contains_key(&new.task_id));
+    }
+
+    #[cfg(feature = "async-wait")]
+    #[test]
+    fn test_task_id_exhaustion_notifies_async_capacity_and_termination_waiters() {
+        use std::task::Context;
+        use std::task::Poll;
+        use std::task::Wake;
+        use std::task::Waker;
+
+        struct Counter(AtomicUsize);
+
+        impl Wake for Counter {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let state = RayonExecutorServiceState::new(1, 1);
+        let accepted = admit(&state, job());
+        let mut capacity = state.capacity_changes();
+        let mut capacity_wait = Box::pin(capacity.changed());
+        let mut termination = state.subscribe_termination();
+        let mut termination_wait = Box::pin(termination.changed());
+        let counter = Arc::new(Counter(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(capacity_wait.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(termination_wait.as_mut().poll(&mut context), Poll::Pending));
+        state.inner.lock().next_task_id = None;
+        let rejected = reject(&state, job());
+        assert_eq!(rejected.0, SubmissionError::Shutdown);
+        drop(rejected.1);
+
+        assert!(
+            counter.0.load(Ordering::SeqCst) >= 1,
+            "capacity waiter should be woken on exhausted admission"
+        );
+        assert!(matches!(capacity_wait.as_mut().poll(&mut context), Poll::Ready(Ok(()))));
+        assert!(matches!(termination_wait.as_mut().poll(&mut context), Poll::Pending));
+
+        let (_, accepted_job) = state.take_next().expect("accepted work remains queued");
+        accepted_job.run();
+        assert!(!state.finish_running(accepted.task_id));
+        assert!(
+            counter.0.load(Ordering::SeqCst) >= 2,
+            "termination waiter should be woken after accepted work completes"
+        );
+        assert!(matches!(
+            termination_wait.as_mut().poll(&mut context),
+            Poll::Ready(Ok(()))
+        ));
+    }
 }

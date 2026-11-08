@@ -51,7 +51,7 @@ pub struct RayonTaskHandle<R, E> {
     /// Shared task result and status observed through blocking and async APIs.
     inner: TrackedTask<R, E>,
     /// Stable identifier assigned by the owning executor service.
-    task_id: usize,
+    task_id: u64,
     /// Shared service state used to keep cancellation counters consistent.
     state: Arc<RayonExecutorServiceState>,
 }
@@ -68,7 +68,7 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// # Returns
     ///
     /// A tracked handle for the accepted Rayon task.
-    pub(crate) fn new(inner: TrackedTask<R, E>, task_id: usize, state: Arc<RayonExecutorServiceState>) -> Self {
+    pub(crate) fn new(inner: TrackedTask<R, E>, task_id: u64, state: Arc<RayonExecutorServiceState>) -> Self {
         Self { inner, task_id, state }
     }
 
@@ -286,7 +286,7 @@ fn cancellation_result_for_status(status: TaskStatus) -> CancelResult {
 /// # Returns
 ///
 /// The observed cancellation outcome.
-fn cancel_task<F>(state: &RayonExecutorServiceState, task_id: usize, absent: F) -> CancelResult
+fn cancel_task<F>(state: &RayonExecutorServiceState, task_id: u64, absent: F) -> CancelResult
 where
     F: FnOnce() -> CancelResult,
 {
