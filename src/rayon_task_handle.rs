@@ -298,7 +298,7 @@ where
             state.finish_cancelling(task_id);
             CancelResult::Cancelled
         }
-        CancelDisposition::InProgress => CancelResult::Cancelled,
+        CancelDisposition::InProgress => CancelResult::AlreadyFinished,
         CancelDisposition::Absent => absent(),
     }
 }
