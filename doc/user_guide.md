@@ -18,7 +18,9 @@ task is queued, running, or being cancelled; all three states consume
 `submit_callable` for a result, and tracked submissions for status or
 best-effort cancellation before work starts. Detached submissions expose only
 admission status; see [Errors and Diagnostics](#errors-and-diagnostics) for
-where their final task result goes.
+where their final task result goes. If internal unique task identifiers are
+exhausted, the service stops accepting new work and returns `Shutdown`;
+already accepted work continues to completion.
 
 ```text
 caller -> bounded accepted-task capacity -> Rayon pool -> task handle
@@ -262,7 +264,7 @@ and cancelled tasks, but it cannot forcibly interrupt a running Rayon task.
 | Observation | Meaning and response |
 | --- | --- |
 | `ZeroThreadCount`, `ZeroStackSize`, or `ZeroTaskCapacity` | A builder value was zero; configure a non-zero value. |
-| `SubmissionError::Saturated` | Accepted unfinished work reached `task_capacity`; wait for a capacity notification and retry with a newly constructed callable, reduce pressure, cancel queued tracked work, or choose a suitable capacity. |
+| `SubmissionError::Saturated` | Accepted unfinished work reached `task_capacity`; wait for a [capacity notification](#async-shutdown-and-capacity-waits) and retry the callable returned by `try_submit_callable`. Consuming submission methods require retained or reconstructed inputs. Alternatively reduce pressure, cancel queued tracked work, or choose a suitable capacity. |
 | `SubmissionError::Shutdown` | The service no longer admits tasks; submit new work only to a running service. |
 | `TaskExecutionError::Cancelled` | A queued tracked task was cancelled; resubmit only if the application still needs it. |
 

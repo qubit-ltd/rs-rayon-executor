@@ -8,7 +8,7 @@
 
 ## 概念模型
 
-`RayonExecutorServiceBuilder` 创建独立的 Rayon 池，`RayonExecutorService` 通过 `ExecutorService` 接受任务。每项已接纳任务都处于排队、运行或取消中之一，三种状态都会占用 `task_capacity`；默认容量为 1024。无需结果的 runnable 使用 `submit`；只关心结果时使用 `submit_callable`；需要状态或尽力取消尚未开始的任务时使用 tracked 提交方法。detached 提交只提供接纳状态；最终任务结果的去向见[错误与诊断](#错误与诊断)。
+`RayonExecutorServiceBuilder` 创建独立的 Rayon 池，`RayonExecutorService` 通过 `ExecutorService` 接受任务。每项已接纳任务都处于排队、运行或取消中之一，三种状态都会占用 `task_capacity`；默认容量为 1024。无需结果的 runnable 使用 `submit`；只关心结果时使用 `submit_callable`；需要状态或尽力取消尚未开始的任务时使用 tracked 提交方法。detached 提交只提供接纳状态；最终任务结果的去向见[错误与诊断](#错误与诊断)。内部唯一任务标识耗尽时，服务会停止接纳新任务并返回 `Shutdown`；已接纳的任务仍会继续完成。
 
 ```text
 调用方 -> 已接纳任务的容量上限 -> Rayon 池 -> 任务句柄
@@ -207,7 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | 现象 | 含义与处理 |
 | --- | --- |
 | `ZeroThreadCount`、`ZeroStackSize` 或 `ZeroTaskCapacity` | builder 的值为零；请配置非零值。 |
-| `SubmissionError::Saturated` | 未完成的已接纳任务达到 `task_capacity`；等待容量通知，并使用新构造的 callable 重试；也可降低提交压力、取消队列中的 tracked 任务，或选择合适容量。 |
+| `SubmissionError::Saturated` | 未完成的已接纳任务达到 `task_capacity`；等待[容量通知](#异步关闭与容量等待)后，重试 `try_submit_callable` 归还的 callable。消费型提交方法需要预先保留或重建输入。也可降低提交压力、取消排队中的 tracked 任务，或选择合适容量。 |
 | `SubmissionError::Shutdown` | 服务已不再接纳任务；新任务只能提交给仍在运行的服务。 |
 | `TaskExecutionError::Cancelled` | 队列中的 tracked 任务已取消；仅在业务仍需要时重新提交。 |
 
