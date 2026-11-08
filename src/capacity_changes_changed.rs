@@ -12,12 +12,15 @@ use std::task::Poll;
 
 use tokio::sync::watch;
 
+use crate::internal::IsolatedWakers;
 use crate::internal::poll_with_waker_panic_isolation;
 
 /// Future returned by [`crate::CapacityChanges::changed`].
 pub struct CapacityChangesChanged<'a> {
     /// Watch future polled with a panic-isolating waker.
     future: Pin<Box<dyn Future<Output = Result<(), watch::error::RecvError>> + Send + 'a>>,
+    /// Cached caller and proxy wakers for this future.
+    wakers: IsolatedWakers,
 }
 
 /// Implements polling for the capacity notification future.
@@ -28,7 +31,10 @@ impl<'a> CapacityChangesChanged<'a> {
     ///
     /// * `future` - The Tokio watch future to poll.
     pub(crate) fn new(future: Pin<Box<dyn Future<Output = Result<(), watch::error::RecvError>> + Send + 'a>>) -> Self {
-        Self { future }
+        Self {
+            future,
+            wakers: IsolatedWakers::default(),
+        }
     }
 }
 
@@ -44,6 +50,6 @@ impl Future for CapacityChangesChanged<'_> {
     /// * `context` - The task context whose waker is safely proxied.
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        poll_with_waker_panic_isolation(this.future.as_mut(), context)
+        poll_with_waker_panic_isolation(&mut this.wakers, this.future.as_mut(), context)
     }
 }

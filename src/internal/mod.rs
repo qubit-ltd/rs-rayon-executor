@@ -11,6 +11,8 @@ mod admission;
 mod callable_job;
 mod cancel_disposition;
 #[cfg(feature = "async-wait")]
+mod isolated_wakers;
+#[cfg(feature = "async-wait")]
 mod panic_isolating_wake;
 mod panic_payload;
 mod rayon_executor_service_inner;
@@ -21,6 +23,8 @@ mod waker_panic_isolation;
 pub(crate) use admission::Admission;
 pub(crate) use callable_job::CallableJob;
 pub(crate) use cancel_disposition::CancelDisposition;
+#[cfg(feature = "async-wait")]
+pub(crate) use isolated_wakers::IsolatedWakers;
 #[cfg(feature = "async-wait")]
 pub(crate) use panic_isolating_wake::PanicIsolatingWake;
 pub(crate) use panic_payload::discard_panic_payload;

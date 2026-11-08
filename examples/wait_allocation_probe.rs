@@ -134,7 +134,7 @@ fn print_environment() {
         env!("CARGO_MANIFEST_DIR"),
         env!("CARGO_MANIFEST_DIR")
     );
-    println!("metadata,rayon_workers=4,capacity=16,rounds=5,warmup_rounds=1,tasks_per_producer=60");
+    println!("metadata,rayon_workers=4,capacity=16,rounds=5,warmup_rounds=2,tasks_per_producer=1000");
     println!("allocation_probe,kind,factor,samples,allocations,total_allocations");
     println!(
         "throughput_probe,kind,producers,work_units,round,tasks,elapsed_ns,tasks_per_second,p50_submit_ns,p95_submit_ns"
@@ -248,6 +248,7 @@ fn measure_contention(runtime: &Runtime) -> Result<(), Box<dyn std::error::Error
     for producers in [1, 8, 32] {
         for (label, work_units) in [("short", 64), ("long", 4_000)] {
             run_contention_case(runtime, producers, label, work_units, 0)?;
+            run_contention_case(runtime, producers, label, work_units, -1)?;
             for round in 1..=5 {
                 run_contention_case(runtime, producers, label, work_units, round)?;
             }
@@ -262,9 +263,9 @@ fn run_contention_case(
     producers: usize,
     work_label: &str,
     work_units: u64,
-    round: usize,
+    round: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const TASKS_PER_PRODUCER: usize = 60;
+    const TASKS_PER_PRODUCER: usize = 1_000;
     let service = Arc::new(
         RayonExecutorService::builder()
             .num_threads(4)

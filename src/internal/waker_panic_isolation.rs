@@ -7,10 +7,10 @@
 // =============================================================================
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Waker;
+
+use crate::internal::IsolatedWakers;
 
 /// Future adapter that contains panics from a task's waker.
 ///
@@ -20,6 +20,8 @@ use std::task::Waker;
 pub(crate) struct WakerPanicIsolation<F> {
     /// Future polled with the proxy waker.
     future: Pin<Box<F>>,
+    /// Caller and proxy wakers retained for this future's repeated polls.
+    wakers: IsolatedWakers,
 }
 
 /// Constructs a future adapter with the requested inner future.
@@ -33,6 +35,7 @@ impl<F> WakerPanicIsolation<F> {
     pub(crate) fn new(future: F) -> Self {
         Self {
             future: Box::pin(future),
+            wakers: IsolatedWakers::default(),
         }
     }
 }
@@ -49,7 +52,7 @@ impl<F: Future> Future for WakerPanicIsolation<F> {
     /// * `context` - The caller's task context.
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        poll_with_waker_panic_isolation(this.future.as_mut(), context)
+        poll_with_waker_panic_isolation(&mut this.wakers, this.future.as_mut(), context)
     }
 }
 
@@ -63,17 +66,17 @@ impl<F: Future> Future for WakerPanicIsolation<F> {
 ///
 /// * `future` - Pinned future to poll.
 /// * `context` - The caller's task context.
+/// * `wakers` - The per-future cache of caller and proxy wakers.
 ///
 /// # Returns
 ///
 /// The result from polling the wrapped future.
 pub(crate) fn poll_with_waker_panic_isolation<F: Future + ?Sized>(
+    wakers: &mut IsolatedWakers,
     future: Pin<&mut F>,
     context: &mut Context<'_>,
 ) -> Poll<F::Output> {
-    let waker = Waker::from(Arc::new(crate::internal::PanicIsolatingWake::new(
-        context.waker().clone(),
-    )));
-    let mut isolated_context = Context::from_waker(&waker);
+    let proxy = wakers.proxy_for(context.waker());
+    let mut isolated_context = Context::from_waker(proxy);
     future.poll(&mut isolated_context)
 }
