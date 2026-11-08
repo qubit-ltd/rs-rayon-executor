@@ -10,11 +10,9 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Output;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use std::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -195,6 +193,27 @@ fn test_parser_rejects_missing_unknown_unclosed_and_duplicate_roles() {
     );
 }
 
+#[test]
+fn test_capacity_retry_original_main_compile_error_is_reported() {
+    let source = fs::read_to_string("doc/user_guide.md").expect("read English user guide");
+    let document = parse_document("doc/user_guide.md", &source).expect("parse English user guide");
+    let block = document.rust[&Role::CapacityRetry].clone();
+    let fixture = Fixture::new(true);
+    fixture.write_manifest(document.path, &document.blocks, true);
+
+    let malformed = capacity_retry_with_invalid_main(&block);
+    let binary = "capacity_retry_invalid_original";
+    fixture.write_bin(binary, &malformed);
+    let output = fixture.run_cargo_output(document.path, Role::CapacityRetry, &block.heading, block.line, binary);
+    assert!(!output.status.success(), "the original main must fail to compile");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(binary), "binary context missing from stderr:\n{stderr}");
+    assert!(
+        stderr.contains("missing_capacity_retry_symbol"),
+        "compiler error for the injected missing symbol is absent:\n{stderr}"
+    );
+}
+
 pub(crate) fn check_all_documents() {
     let paths = [
         "README.md",
@@ -228,15 +247,29 @@ fn check_document(doc: Document) {
         let asynchronous = matches!(role, Role::StopHelper | Role::CapacityRetry);
         let fixture = Fixture::new(asynchronous);
         fixture.write_manifest(doc.path, &doc.blocks, asynchronous);
+        if role == Role::CapacityRetry {
+            let original = format!("example_{}_original", role as usize);
+            fixture.write_bin(&original, &block.code);
+            let original_path = fixture.root.join("src/bin").join(format!("{original}.rs"));
+            let written = fs::read(&original_path).expect("read original documentation program");
+            assert_eq!(
+                written,
+                block.code.as_bytes(),
+                "{doc_path}:{line} original program was altered",
+                doc_path = doc.path,
+                line = block.line
+            );
+            fixture.run_cargo(doc.path, role, &block.heading, block.line, &original);
+
+            let saturated = format!("example_{}_saturated", role as usize);
+            fixture.write_bin(&saturated, &capacity_retry_saturated_source(&block));
+            fixture.run_cargo(doc.path, role, &block.heading, block.line, &saturated);
+            continue;
+        }
         let source = if role == Role::StopHelper {
             format!(
                 "{}\n#[tokio::main]\nasync fn main() {{\n    let service = RayonExecutorService::builder().num_threads(1).build().unwrap();\n    stop_without_blocking_runtime(&service).await.unwrap();\n    assert!(service.is_terminated());\n}}\n",
                 block.code
-            )
-        } else if role == Role::CapacityRetry {
-            let helpers = block.code.split("#[tokio::main]").next().unwrap_or(&block.code);
-            format!(
-                "{helpers}\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {{\n    use std::time::Duration;\n    let service = RayonExecutorService::builder().num_threads(1).task_capacity(1).build()?;\n    let (started_tx, started_rx) = std::sync::mpsc::channel();\n    let (release_tx, release_rx) = std::sync::mpsc::channel();\n    let blocker = service.try_submit_callable(move || {{ started_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(10)).unwrap(); Ok::<(), std::io::Error>(()) }}).unwrap();\n    started_rx.recv_timeout(Duration::from_secs(10))?;\n    let waiting = submit_after_capacity(&service, vec![8, 13, 21, 34].into_boxed_slice());\n    tokio::pin!(waiting);\n    let was_pending = std::future::poll_fn(|cx| std::task::Poll::Ready(matches!(std::future::Future::poll(waiting.as_mut(), cx), std::task::Poll::Pending))).await;\n    assert!(was_pending, \"saturated submission should wait before capacity is released\");\n    release_tx.send(())?;\n    blocker.await?;\n    assert_eq!(waiting.await?, 76);\n    service.shutdown(); service.await_termination().await; Ok(())\n}}\n"
             )
         } else {
             block.code
@@ -245,6 +278,18 @@ fn check_document(doc: Document) {
         fixture.write_bin(&bin, &source);
         fixture.run_cargo(doc.path, role, &block.heading, block.line, &bin);
     }
+}
+
+fn capacity_retry_saturated_source(block: &Block) -> String {
+    let helpers = block.code.split("#[tokio::main]").next().unwrap_or(&block.code);
+    format!(
+        "{helpers}\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {{\n    use std::time::Duration;\n    let service = RayonExecutorService::builder().num_threads(1).task_capacity(1).build()?;\n    let (started_tx, started_rx) = std::sync::mpsc::channel();\n    let (release_tx, release_rx) = std::sync::mpsc::channel();\n    let blocker = service.try_submit_callable(move || {{ started_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(10)).unwrap(); Ok::<(), std::io::Error>(()) }}).unwrap();\n    started_rx.recv_timeout(Duration::from_secs(10))?;\n    let waiting = submit_after_capacity(&service, vec![8, 13, 21, 34].into_boxed_slice());\n    tokio::pin!(waiting);\n    let was_pending = std::future::poll_fn(|cx| std::task::Poll::Ready(matches!(std::future::Future::poll(waiting.as_mut(), cx), std::task::Poll::Pending))).await;\n    assert!(was_pending, \"saturated submission should wait before capacity is released\");\n    release_tx.send(())?;\n    blocker.await?;\n    assert_eq!(waiting.await?, 76);\n    service.shutdown(); service.await_termination().await; Ok(())\n}}\n"
+    )
+}
+
+fn capacity_retry_with_invalid_main(block: &Block) -> String {
+    let helpers = block.code.split("#[tokio::main]").next().unwrap_or(&block.code);
+    format!("{helpers}\n#[tokio::main]\nasync fn main() {{ missing_capacity_retry_symbol(); }}\n")
 }
 
 struct Fixture {
@@ -318,6 +363,25 @@ impl Fixture {
     }
 
     fn run_cargo(&self, document: &str, role: Role, heading: &str, line: usize, bin: &str) {
+        let output = self.run_cargo_output(document, role, heading, line, bin);
+        if !output.status.success() {
+            panic!(
+                "{document}:{line} ({heading}) {} failed\nstdout:\n{}\nstderr:\n{}",
+                role.name(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    fn run_cargo_output(
+        &self,
+        document: &str,
+        role: Role,
+        heading: &str,
+        line: usize,
+        bin: &str,
+    ) -> std::process::Output {
         let mut command = Command::new("cargo");
         command
             .arg("run")
@@ -331,15 +395,7 @@ impl Fixture {
         if !self.asynchronous {
             command.arg("--no-default-features");
         }
-        let output = run_bounded(command, document, role, heading, line);
-        if !output.status.success() {
-            panic!(
-                "{document}:{line} ({heading}) {} failed\nstdout:\n{}\nstderr:\n{}",
-                role.name(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        run_bounded(command, document, role, heading, line)
     }
 }
 
@@ -349,43 +405,23 @@ impl Drop for Fixture {
     }
 }
 
-fn run_bounded(mut command: Command, document: &str, role: Role, heading: &str, line: usize) -> Output {
-    let mut child = command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| {
-            panic!(
-                "{document}:{line} ({heading}) {}: failed to start child process: {error}",
-                role.name()
-            )
-        });
-    let start = Instant::now();
-    loop {
-        if child
-            .try_wait()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "{document}:{line} ({heading}) {}: cannot wait for child process: {error}",
-                    role.name()
-                )
-            })
-            .is_some()
-        {
-            return child.wait_with_output().expect("collect cargo output");
-        }
-        if start.elapsed() >= TIMEOUT {
-            let _ = child.kill();
-            let output = child.wait_with_output().expect("collect timed-out cargo output");
-            panic!(
-                "{document}:{line} ({heading}) {} exceeded {} seconds\nstderr:\n{}",
-                role.name(),
-                TIMEOUT.as_secs(),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        std::thread::sleep(Duration::from_millis(50));
+fn run_bounded(mut command: Command, document: &str, role: Role, heading: &str, line: usize) -> std::process::Output {
+    let result = crate::common::subprocess::run_bounded_output(&mut command, TIMEOUT).unwrap_or_else(|error| {
+        panic!(
+            "{document}:{line} ({heading}) {}: failed to run child process: {error}",
+            role.name()
+        )
+    });
+    if result.timed_out {
+        panic!(
+            "{document}:{line} ({heading}) {} exceeded {} seconds\nstdout:\n{}\nstderr:\n{}",
+            role.name(),
+            TIMEOUT.as_secs(),
+            String::from_utf8_lossy(&result.output.stdout),
+            String::from_utf8_lossy(&result.output.stderr)
+        );
     }
+    result.output
 }
 
 fn dependency_version(toml: &str, name: &str, document: &str) -> String {
@@ -415,4 +451,44 @@ fn dependency_version(toml: &str, name: &str, document: &str) -> String {
 
 fn project_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[cfg(test)]
+mod subprocess_error_tests {
+    use std::panic::AssertUnwindSafe;
+    use std::process::Command;
+
+    use super::Role;
+    use super::run_bounded;
+
+    #[test]
+    fn test_spawn_error_keeps_document_location_and_role() {
+        let executable = std::env::temp_dir().join(format!("missing-doc-example-{}", std::process::id()));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            run_bounded(
+                Command::new(executable),
+                "guide.md",
+                Role::CapacityRetry,
+                "Capacity retry",
+                42,
+            )
+        }));
+
+        let panic = result.expect_err("missing executable should panic with context");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic message should be text");
+        assert!(message.contains("guide.md:42 (Capacity retry) capacity retry program"));
+        assert!(message.contains("failed to run child process"));
+        assert!(
+            !message.contains("stdout summary:"),
+            "spawn failure has no child output"
+        );
+        assert!(
+            !message.contains("stderr summary:"),
+            "spawn failure has no child output"
+        );
+    }
 }

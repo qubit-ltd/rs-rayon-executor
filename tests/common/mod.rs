@@ -6,3 +6,4 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 pub(crate) mod helpers;
+pub(crate) mod subprocess;

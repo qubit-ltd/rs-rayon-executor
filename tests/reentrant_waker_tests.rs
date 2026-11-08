@@ -11,7 +11,6 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
@@ -22,6 +21,8 @@ use std::time::Duration;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
+
+mod common;
 
 struct ReentrantWake {
     service: RayonExecutorService,
@@ -90,39 +91,21 @@ fn test_reentrant_waker_reentry_completes() {
         .chain(["completion-control-stats".to_owned(), "queued-control-stats".to_owned()])
         .collect::<Vec<_>>();
     for case in cases {
-        let mut child = Command::new(std::env::current_exe().expect("test executable path"))
+        let mut command = Command::new(std::env::current_exe().expect("test executable path"));
+        command
             .args(["--exact", "test_reentrant_waker_reentry_completes", "--nocapture"])
-            .env("RXE_REENTRANT_CASE", &case)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("child test should start");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(status) = child.try_wait().expect("child status should be readable") {
-                let output = child.wait_with_output().expect("child output should be readable");
-                assert!(
-                    status.success(),
-                    "child case {case} failed: {status}\n{}\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                child.kill().expect("timed out child should be killed");
-                let status = child.wait().expect("killed child should be reaped");
-                let output = child
-                    .wait_with_output()
-                    .expect("killed child output should be readable");
-                panic!(
-                    "child case {case} timed out and was killed ({status})\n{}\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            .env("RXE_REENTRANT_CASE", &case);
+        let result = common::subprocess::run_bounded_output(&mut command, Duration::from_secs(5))
+            .unwrap_or_else(|error| panic!("child case {case} could not run: {error}"));
+        let output = result.output;
+        assert!(
+            !result.timed_out && output.status.success(),
+            "child case {case} {} ({})\nstdout:\n{}\nstderr:\n{}",
+            if result.timed_out { "timed out" } else { "failed" },
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 

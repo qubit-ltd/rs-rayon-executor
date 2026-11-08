@@ -11,7 +11,6 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -152,34 +151,19 @@ fn run_isolated(name: &str, body: fn()) {
         return;
     }
 
-    let mut child = Command::new(std::env::current_exe().expect("test executable path"))
-        .args(["--exact", name, "--nocapture"])
-        .env(CHILD_MARKER, name)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("isolated regression child should start");
-    let deadline = Instant::now() + DEADLINE;
-    loop {
-        match child.try_wait().expect("child status should be available") {
-            Some(status) => {
-                if !status.success() {
-                    let output = child.wait_with_output().expect("child output should be collected");
-                    panic!(
-                        "isolated case {name} failed with {status}:\n{}\n{}",
-                        String::from_utf8_lossy(&output.stdout),
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                }
-                return;
-            }
-            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("isolated case {name} exceeded the 10 second deadline");
-            }
-        }
+    let mut command = Command::new(std::env::current_exe().expect("test executable path"));
+    command.args(["--exact", name, "--nocapture"]).env(CHILD_MARKER, name);
+    let result = common::subprocess::run_bounded_output(&mut command, DEADLINE)
+        .unwrap_or_else(|error| panic!("isolated case {name} could not run: {error}"));
+    let output = result.output;
+    if result.timed_out || !output.status.success() {
+        panic!(
+            "isolated case {name} {} ({})\nstdout:\n{}\nstderr:\n{}",
+            if result.timed_out { "timed out" } else { "failed" },
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
