@@ -195,8 +195,7 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
     for allocations in measure_notification_allocations(&service)? {
         println!(
             "allocation_probe,capacity_notification,each,1,{},{}",
-            allocations,
-            allocations
+            allocations, allocations
         );
     }
     service.shutdown();
