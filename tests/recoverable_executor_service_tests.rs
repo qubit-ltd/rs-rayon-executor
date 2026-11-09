@@ -68,8 +68,8 @@ fn run_scenario(test_name: &str, scenario: &str, body: impl FnOnce()) {
         .arg(test_name)
         .arg("--nocapture")
         .env(CHILD_SCENARIO, scenario);
-    let bounded = common::subprocess::run_bounded_output(&mut command, CHILD_DEADLINE)
-        .expect("scenario subprocess should run");
+    let bounded =
+        common::subprocess::run_bounded_output(&mut command, CHILD_DEADLINE).expect("scenario subprocess should run");
     let stdout = String::from_utf8_lossy(&bounded.output.stdout);
     let stderr = String::from_utf8_lossy(&bounded.output.stderr);
     assert!(
@@ -101,9 +101,7 @@ fn service_with_blocker() -> (
     let (release_tx, release_rx) = mpsc::channel();
     let blocker = service
         .submit_callable(move || {
-            started_tx
-                .send(())
-                .expect("coordinator should receive start");
+            started_tx.send(()).expect("coordinator should receive start");
             release_rx
                 .recv_timeout(CHANNEL_DEADLINE)
                 .map_err(|error| io::Error::other(error.to_string()))?;
@@ -131,8 +129,7 @@ fn test_recoverable_trait_accepts_callable() {
             .num_threads(1)
             .build()
             .expect("service should build");
-        let handle = attempt(&service, || Ok::<usize, io::Error>(42))
-            .expect("shared trait should accept callable");
+        let handle = attempt(&service, || Ok::<usize, io::Error>(42)).expect("shared trait should accept callable");
         terminate(&service);
         assert_eq!(handle.get().expect("callable should succeed"), 42);
     });
@@ -174,10 +171,7 @@ fn test_recoverable_trait_retries_same_saturated_callable() {
                     Err(rejected) => {
                         let (reason, returned_task) = rejected.into_parts();
                         assert_eq!(reason, SubmissionError::Saturated);
-                        assert!(
-                            Instant::now() < deadline,
-                            "capacity did not recover within 10 seconds"
-                        );
+                        assert!(Instant::now() < deadline, "capacity did not recover within 10 seconds");
                         task = returned_task;
                     }
                 }
