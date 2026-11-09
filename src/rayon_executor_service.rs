@@ -13,6 +13,8 @@ use std::time::Duration;
 use qubit_executor::TaskHandle;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::ExecutorServiceLifecycle;
+use qubit_executor::service::RecoverableExecutorService;
+use qubit_executor::service::RejectedTask as ExecutorRejectedTask;
 use qubit_executor::service::StopReport;
 use qubit_executor::service::SubmissionError;
 use qubit_executor::task::spi::TaskEndpointPair;
@@ -437,5 +439,45 @@ impl ExecutorService for RayonExecutorService {
     /// `true` if termination is observed before the timeout; otherwise `false`.
     fn wait_termination_timeout(&self, timeout: Duration) -> bool {
         self.state.wait_for_termination_timeout(timeout)
+    }
+}
+
+impl RecoverableExecutorService for RayonExecutorService {
+    /// Submits a callable while returning ownership if the service rejects it.
+    ///
+    /// The callable is moved into the existing inherent submission method.
+    /// On acceptance, its handle is returned unchanged. On rejection, this
+    /// method transfers the rejection reason and original callable into the
+    /// executor-wide [`ExecutorRejectedTask`]; it does not call, clone, or
+    /// drop the callable.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `C` - Callable submitted for execution.
+    /// * `R` - Successful callable result.
+    /// * `E` - Callable error.
+    ///
+    /// # Parameters
+    ///
+    /// * `task` - Callable to execute if the service accepts it; ownership is
+    ///   returned inside the error if submission fails.
+    ///
+    /// # Returns
+    ///
+    /// Returns the result handle on acceptance, or the rejection reason and
+    /// original callable on rejection.
+    fn try_submit_callable<C, R, E>(
+        &self,
+        task: C,
+    ) -> Result<Self::ResultHandle<R, E>, ExecutorRejectedTask<C>>
+    where
+        C: Callable<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        RayonExecutorService::try_submit_callable(self, task).map_err(|rejected| {
+            let (reason, task) = rejected.into_parts();
+            ExecutorRejectedTask::new(reason, task)
+        })
     }
 }
