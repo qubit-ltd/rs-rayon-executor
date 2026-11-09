@@ -57,6 +57,7 @@ impl<C, R, E> CallableJob<C, R, E> {
         clippy::boxed_local,
         reason = "the rejected typed Box owns the result slot that must be released before returning its callable"
     )]
+    #[must_use]
     pub(crate) fn into_task(self: Box<Self>) -> C {
         let Self { task, slot } = *self;
         drop(slot);
