@@ -5,6 +5,8 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+use std::any::Any;
+
 /// Drops a panic payload without allowing its destructor to unwind again.
 ///
 /// The original payload is dropped normally. If that destructor panics, the
@@ -16,7 +18,7 @@
 /// # Parameters
 ///
 /// - `payload`: The panic payload to drop while containing a secondary panic.
-pub(crate) fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+pub(crate) fn discard_panic_payload(payload: Box<dyn Any + Send>) {
     if let Err(secondary) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload))) {
         std::mem::forget(secondary);
     }

@@ -24,6 +24,10 @@ impl IsolatedWakers {
     /// # Parameters
     ///
     /// * `caller` - The current task waker.
+    ///
+    /// # Returns
+    ///
+    /// The cached proxy for `caller`, borrowed from this cache.
     pub(crate) fn proxy_for(&mut self, caller: &Waker) -> &Waker {
         if !self.caller.as_ref().is_some_and(|cached| cached.will_wake(caller)) {
             self.caller = Some(caller.clone());

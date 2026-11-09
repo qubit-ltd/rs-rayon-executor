@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+use rayon::ThreadPoolBuildError;
 use thiserror::Error;
 
 /// Error returned when [`crate::RayonExecutorServiceBuilder`] cannot build a
@@ -39,6 +40,6 @@ pub enum RayonExecutorServiceBuildError {
     BuildFailed {
         /// Rayon build error returned by the underlying thread-pool builder.
         #[from]
-        source: rayon::ThreadPoolBuildError,
+        source: ThreadPoolBuildError,
     },
 }

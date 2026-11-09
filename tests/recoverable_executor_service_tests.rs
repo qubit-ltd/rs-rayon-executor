@@ -5,6 +5,10 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+//! Integration tests for the shared recoverable submission trait.
+//!
+//! Each contract scenario runs in a bounded child process so a stalled executor
+//! cannot hang the test suite.
 mod common;
 
 use std::io;
@@ -16,21 +20,27 @@ use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
 
+use qubit_executor::TaskHandle;
 use qubit_executor::service::ExecutorService;
+use qubit_executor::service::RecoverableExecutorService;
+use qubit_executor::service::RejectedTask;
 use qubit_executor::service::SubmissionError;
+use qubit_function::Callable;
 use qubit_rayon_executor::RayonExecutorService;
 
 const CHANNEL_DEADLINE: Duration = Duration::from_secs(10);
 const CHILD_DEADLINE: Duration = Duration::from_secs(30);
 const CHILD_SCENARIO: &str = "RRE_RECOVERABLE_EXECUTOR_SCENARIO";
 
+/// Tracks callable execution and destruction while retaining a payload for
+/// ownership checks.
 struct Probe {
     payload: Box<usize>,
     calls: Arc<AtomicUsize>,
     drops: Arc<AtomicUsize>,
 }
 
-impl qubit_function::Callable<usize, io::Error> for Probe {
+impl Callable<usize, io::Error> for Probe {
     fn call(&mut self) -> Result<usize, io::Error> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(*self.payload)
@@ -43,17 +53,16 @@ impl Drop for Probe {
     }
 }
 
-fn attempt<S, C>(
-    service: &S,
-    task: C,
-) -> Result<S::ResultHandle<usize, io::Error>, qubit_executor::service::RejectedTask<C>>
+fn attempt<S, C>(service: &S, task: C) -> Result<S::ResultHandle<usize, io::Error>, RejectedTask<C>>
 where
-    S: qubit_executor::service::RecoverableExecutorService,
-    C: qubit_function::Callable<usize, io::Error> + Send + 'static,
+    S: RecoverableExecutorService,
+    C: Callable<usize, io::Error> + Send + 'static,
 {
-    qubit_executor::service::RecoverableExecutorService::try_submit_callable(service, task)
+    RecoverableExecutorService::try_submit_callable(service, task)
 }
 
+/// Runs one contract body in a bounded subprocess and verifies its completion
+/// marker.
 fn run_scenario(test_name: &str, scenario: &str, body: impl FnOnce()) {
     if std::env::var(CHILD_SCENARIO).as_deref() == Ok(scenario) {
         body();
@@ -87,11 +96,9 @@ fn run_scenario(test_name: &str, scenario: &str, body: impl FnOnce()) {
     );
 }
 
-fn service_with_blocker() -> (
-    RayonExecutorService,
-    qubit_executor::TaskHandle<(), io::Error>,
-    mpsc::Sender<()>,
-) {
+/// Creates a single-worker service with a running task that holds its only
+/// queue slot.
+fn service_with_blocker() -> (RayonExecutorService, TaskHandle<(), io::Error>, mpsc::Sender<()>) {
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .task_capacity(1)
@@ -114,6 +121,8 @@ fn service_with_blocker() -> (
     (service, blocker, release_tx)
 }
 
+/// Shuts down the service and waits for termination within the shared test
+/// deadline.
 fn terminate(service: &RayonExecutorService) {
     service.shutdown();
     assert!(

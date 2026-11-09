@@ -61,6 +61,16 @@ impl CapacityChanges {
     }
 
     /// Returns whether the receiver has an unseen notification.
+    ///
+    /// # Returns
+    ///
+    /// `true` if an unseen notification is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`watch::error::RecvError`] if the service state has been
+    /// dropped.
+    #[inline]
     pub fn has_changed(&self) -> Result<bool, watch::error::RecvError> {
         self.receiver.has_changed()
     }
@@ -74,6 +84,11 @@ impl CapacityChanges {
     /// Holding the guard across such an operation can block that operation
     /// indefinitely. The generation is a wrapping notification token, not a
     /// count of available capacity.
+    ///
+    /// # Returns
+    ///
+    /// A guard holding the current generation and a read lock on the channel.
+    #[inline]
     pub fn borrow(&self) -> watch::Ref<'_, u64> {
         self.receiver.borrow()
     }
@@ -87,6 +102,11 @@ impl CapacityChanges {
     /// Holding the guard across such an operation can block that operation
     /// indefinitely. The generation is a wrapping notification token, not a
     /// count of available capacity.
+    ///
+    /// # Returns
+    ///
+    /// A guard holding the current generation and a read lock on the channel.
+    #[inline]
     pub fn borrow_and_update(&mut self) -> watch::Ref<'_, u64> {
         self.receiver.borrow_and_update()
     }
@@ -96,6 +116,11 @@ impl CapacityChanges {
     /// The generation is a wrapping notification token, not a count of
     /// available capacity. A notification does not guarantee that a capacity
     /// slot will still be available when a task is submitted.
+    ///
+    /// # Returns
+    ///
+    /// The current wrapping notification generation.
+    #[inline]
     pub fn generation(&self) -> u64 {
         *self.receiver.borrow()
     }
@@ -105,21 +130,33 @@ impl CapacityChanges {
     /// The generation is a wrapping notification token, not a count of
     /// available capacity. A notification does not guarantee that a capacity
     /// slot will still be available when a task is submitted.
+    ///
+    /// # Returns
+    ///
+    /// The current wrapping notification generation.
+    #[inline]
     pub fn generation_and_update(&mut self) -> u64 {
         *self.receiver.borrow_and_update()
     }
 
     /// Returns whether the underlying channel is closed.
+    ///
+    /// # Returns
+    ///
+    /// `true` if no sender remains for the channel.
+    #[inline]
     pub fn is_closed(&self) -> bool {
         self.receiver.is_closed()
     }
 
     /// Marks the current generation as unseen.
+    #[inline]
     pub fn mark_changed(&mut self) {
         self.receiver.mark_changed();
     }
 
     /// Marks the current generation as seen.
+    #[inline]
     pub fn mark_unchanged(&mut self) {
         self.receiver.mark_unchanged();
     }
@@ -133,6 +170,7 @@ impl CapacityChanges {
     /// # Returns
     ///
     /// `true` if both receivers observe the same underlying channel.
+    #[inline]
     pub fn same_channel(&self, other: &Self) -> bool {
         self.receiver.same_channel(&other.receiver)
     }
@@ -145,6 +183,11 @@ impl From<watch::Receiver<u64>> for CapacityChanges {
     /// # Parameters
     ///
     /// * `receiver` - The subscribed watch receiver.
+    ///
+    /// # Returns
+    ///
+    /// A capacity change receiver backed by `receiver`.
+    #[inline]
     fn from(receiver: watch::Receiver<u64>) -> Self {
         Self { receiver }
     }

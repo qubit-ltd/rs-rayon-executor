@@ -17,14 +17,11 @@ use std::time::Duration;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
+use qubit_rayon_executor::RayonTaskHandle;
 
 const DEADLINE: Duration = Duration::from_secs(10);
 
-fn service_with_blocker() -> (
-    RayonExecutorService,
-    qubit_rayon_executor::RayonTaskHandle<(), io::Error>,
-    mpsc::Sender<()>,
-) {
+fn service_with_blocker() -> (RayonExecutorService, RayonTaskHandle<(), io::Error>, mpsc::Sender<()>) {
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .task_capacity(1)

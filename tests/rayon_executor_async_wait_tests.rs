@@ -13,16 +13,20 @@ use std::time::Duration;
 
 use qubit_executor::service::ExecutorService;
 use qubit_rayon_executor::RayonExecutorService;
+use tokio::join;
+use tokio::pin;
+use tokio::task::spawn_blocking;
+use tokio::test as tokio_test;
 use tokio::time::timeout;
 
-#[tokio::test]
+#[tokio_test]
 async fn test_rayon_await_termination_waits_for_shutdown() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .build()
         .expect("service should build");
     let wait = service.await_termination();
-    tokio::pin!(wait);
+    pin!(wait);
     assert!(timeout(Duration::from_millis(20), &mut wait).await.is_err());
     service.shutdown();
     timeout(Duration::from_secs(10), wait)
@@ -32,13 +36,13 @@ async fn test_rayon_await_termination_waits_for_shutdown() {
         .await
         .expect("repeated termination wait should complete");
     timeout(Duration::from_secs(10), async {
-        tokio::join!(service.await_termination(), service.await_termination())
+        join!(service.await_termination(), service.await_termination())
     })
     .await
     .expect("multiple late termination waiters should complete");
 }
 
-#[tokio::test]
+#[tokio_test]
 async fn test_rayon_await_termination_waits_for_running_task_and_multiple_waiters() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
@@ -56,7 +60,7 @@ async fn test_rayon_await_termination_waits_for_running_task_and_multiple_waiter
         })
         .expect("task should be accepted");
     timeout(Duration::from_secs(10), async {
-        tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
+        spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
     })
     .await
     .expect("start signal wait should finish")
@@ -64,16 +68,16 @@ async fn test_rayon_await_termination_waits_for_running_task_and_multiple_waiter
     .expect("task should start");
     service.shutdown();
     let first = service.await_termination();
-    tokio::pin!(first);
+    pin!(first);
     assert!(timeout(Duration::from_millis(20), &mut first).await.is_err());
     let second = service.await_termination();
     release_tx.send(()).expect("task should release");
-    timeout(Duration::from_secs(10), async { tokio::join!(first, second) })
+    timeout(Duration::from_secs(10), async { join!(first, second) })
         .await
         .expect("both waiters should complete");
 }
 
-#[tokio::test]
+#[tokio_test]
 async fn test_rayon_await_termination_survives_cancelled_waiter_and_stop() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
@@ -91,7 +95,7 @@ async fn test_rayon_await_termination_survives_cancelled_waiter_and_stop() {
         .expect("new waiter should complete");
 }
 
-#[tokio::test]
+#[tokio_test]
 async fn test_rayon_await_termination_after_stop_cancels_queued_task() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
@@ -110,7 +114,7 @@ async fn test_rayon_await_termination_after_stop_cancels_queued_task() {
         })
         .expect("running task should be accepted");
     timeout(Duration::from_secs(10), async {
-        tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
+        spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(10))).await
     })
     .await
     .expect("start signal wait should finish")

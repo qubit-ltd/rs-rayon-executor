@@ -57,6 +57,10 @@ impl<T> RejectedTask<T> {
     ///
     /// * `reason` - The admission failure reason.
     /// * `task` - The callable returned to its owner.
+    ///
+    /// # Returns
+    ///
+    /// A rejected-task wrapper retaining the reason and original callable.
     pub(crate) const fn new(reason: SubmissionError, task: T) -> Self {
         Self { reason, task }
     }
@@ -87,6 +91,10 @@ impl<T> fmt::Debug for RejectedTask<T> {
     /// # Parameters
     ///
     /// * `f` - Formatter receiving the displayed structure.
+    ///
+    /// # Returns
+    ///
+    /// Whether formatting the rejection summary succeeded.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RejectedTask").field("reason", &self.reason).finish()
     }
@@ -98,6 +106,10 @@ impl<T> fmt::Display for RejectedTask<T> {
     /// # Parameters
     ///
     /// * `f` - Formatter receiving the displayed message.
+    ///
+    /// # Returns
+    ///
+    /// Whether formatting the rejection message succeeded.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "task rejected: {}", self.reason)
     }

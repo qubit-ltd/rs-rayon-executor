@@ -36,6 +36,10 @@ impl<T, E> RunnableJob<T, E> {
     /// # Parameters
     ///
     /// * `task` - Runnable to queue.
+    ///
+    /// # Returns
+    ///
+    /// A queued job that owns `task` until it is run or cancelled.
     #[must_use]
     #[inline]
     pub(crate) const fn new(task: T) -> Self {

@@ -5,7 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Tests for [`qubit_rayon_executor::RayonExecutorService].
+//! Tests for [`qubit_rayon_executor::RayonExecutorService`].
 
 mod common;
 
@@ -16,6 +16,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+#[cfg(feature = "async-wait")]
+use qubit_executor::CancelResult;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::ExecutorServiceLifecycle;
@@ -389,7 +391,7 @@ async fn test_rayon_executor_service_queued_cancellation_publishes_capacity_chan
         .expect("queued task should be accepted");
     let mut changes = service.capacity_changes();
 
-    assert_eq!(queued.cancel(), qubit_executor::CancelResult::Cancelled);
+    assert_eq!(queued.cancel(), CancelResult::Cancelled);
     tokio::time::timeout(Duration::from_secs(1), changes.changed())
         .await
         .expect("cancellation should publish a capacity change")

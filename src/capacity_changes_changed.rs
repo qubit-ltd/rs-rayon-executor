@@ -16,6 +16,26 @@ use crate::internal::IsolatedWakers;
 use crate::internal::poll_with_waker_panic_isolation;
 
 /// Future returned by [`crate::CapacityChanges::changed`].
+///
+/// # Examples
+///
+/// ```
+/// use qubit_executor::service::ExecutorService;
+/// use qubit_rayon_executor::CapacityChangesChanged;
+/// use qubit_rayon_executor::RayonExecutorService;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let service = RayonExecutorService::builder().num_threads(1).build()?;
+///     let mut changes = service.capacity_changes();
+///     let runtime = tokio::runtime::Builder::new_current_thread()
+///         .enable_all()
+///         .build()?;
+///     let changed: CapacityChangesChanged<'_> = changes.changed();
+///     service.shutdown();
+///     runtime.block_on(changed)?;
+///     Ok(())
+/// }
+/// ```
 pub struct CapacityChangesChanged<'a> {
     /// Watch future polled with a panic-isolating waker.
     future: Pin<Box<dyn Future<Output = Result<(), watch::error::RecvError>> + Send + 'a>>,
@@ -30,6 +50,10 @@ impl<'a> CapacityChangesChanged<'a> {
     /// # Parameters
     ///
     /// * `future` - The Tokio watch future to poll.
+    ///
+    /// # Returns
+    ///
+    /// A notification future that isolates panics from its caller's waker.
     pub(crate) fn new(future: Pin<Box<dyn Future<Output = Result<(), watch::error::RecvError>> + Send + 'a>>) -> Self {
         Self {
             future,
@@ -48,6 +72,12 @@ impl Future for CapacityChangesChanged<'_> {
     /// # Parameters
     ///
     /// * `context` - The task context whose waker is safely proxied.
+    ///
+    /// # Returns
+    ///
+    /// `Poll::Ready` when the channel changes or closes, or `Poll::Pending`
+    /// while waiting for another notification.
+    #[inline]
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         poll_with_waker_panic_isolation(&mut this.wakers, this.future.as_mut(), context)

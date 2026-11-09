@@ -24,6 +24,11 @@ impl PanicIsolatingWake {
     /// # Parameters
     ///
     /// * `waker` - The task waker whose panic must be contained.
+    ///
+    /// # Returns
+    ///
+    /// A proxy that stores `waker` for panic-isolated wake forwarding.
+    #[inline]
     pub(crate) fn new(waker: Waker) -> Self {
         Self { waker }
     }

@@ -32,6 +32,10 @@ impl<F> WakerPanicIsolation<F> {
     /// # Parameters
     ///
     /// * `future` - The future that may register a waker.
+    ///
+    /// # Returns
+    ///
+    /// An adapter that polls `future` with a panic-isolating waker proxy.
     pub(crate) fn new(future: F) -> Self {
         Self {
             future: Box::pin(future),
@@ -50,6 +54,11 @@ impl<F: Future> Future for WakerPanicIsolation<F> {
     /// # Parameters
     ///
     /// * `context` - The caller's task context.
+    ///
+    /// # Returns
+    ///
+    /// The wrapped future's `Poll` result, including `Pending` while it waits.
+    #[inline]
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         poll_with_waker_panic_isolation(&mut this.wakers, this.future.as_mut(), context)

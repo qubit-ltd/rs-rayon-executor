@@ -28,6 +28,7 @@ use qubit_executor::CancelResult;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
+use qubit_rayon_executor::RayonTaskHandle;
 
 const CHILD_CASE: &str = "RXE_NOTIFICATION_UNWIND_CASE";
 const CHILD_DEADLINE: Duration = Duration::from_secs(10);
@@ -282,9 +283,7 @@ fn single_worker_service(task_capacity: usize) -> RayonExecutorService {
         .expect("service should build")
 }
 
-fn running_blocker(
-    service: &RayonExecutorService,
-) -> (qubit_rayon_executor::RayonTaskHandle<(), io::Error>, mpsc::Sender<()>) {
+fn running_blocker(service: &RayonExecutorService) -> (RayonTaskHandle<(), io::Error>, mpsc::Sender<()>) {
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let blocker = service

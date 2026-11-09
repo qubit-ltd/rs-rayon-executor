@@ -20,6 +20,7 @@ use std::time::Instant;
 use qubit_executor::CancelResult;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::TaskResult;
+use qubit_executor::TryGet;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
@@ -30,8 +31,8 @@ const DEADLINE: Duration = Duration::from_secs(10);
 fn wait_for_result_until<R: Send, E: Send>(mut handle: RayonTaskHandle<R, E>, deadline: Instant) -> TaskResult<R, E> {
     loop {
         match handle.try_get() {
-            qubit_executor::TryGet::Ready(result) => return result,
-            qubit_executor::TryGet::Pending(pending) => {
+            TryGet::Ready(result) => return result,
+            TryGet::Pending(pending) => {
                 handle = pending;
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 assert!(!remaining.is_zero(), "task result exceeded its deadline");

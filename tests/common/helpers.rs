@@ -17,16 +17,28 @@ use qubit_rayon_executor::RayonExecutorService;
 use qubit_rayon_executor::RayonTaskHandle;
 
 /// Returns a successful unit task result for executor submission tests.
+///
+/// # Returns
+///
+/// A successful unit result.
 pub(crate) fn ok_unit_task() -> Result<(), io::Error> {
     Ok(())
 }
 
 /// Returns a successful integer task result for callable executor tests.
+///
+/// # Returns
+///
+/// A successful result containing the integer `42`.
 pub(crate) fn ok_usize_task() -> Result<usize, io::Error> {
     Ok(42)
 }
 
 /// Creates a current-thread Tokio runtime for awaiting executor shutdown.
+///
+/// # Returns
+///
+/// A current-thread Tokio runtime with enabled I/O and time drivers.
 pub(crate) fn create_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -35,6 +47,10 @@ pub(crate) fn create_runtime() -> tokio::runtime::Runtime {
 }
 
 /// Creates a Rayon executor service with a single worker thread.
+///
+/// # Returns
+///
+/// A Rayon executor service configured with one worker thread.
 pub(crate) fn create_single_worker_service() -> RayonExecutorService {
     RayonExecutorService::builder()
         .num_threads(1)

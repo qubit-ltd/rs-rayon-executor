@@ -82,6 +82,11 @@ impl RayonExecutorServiceState {
 
     /// Subscribes before checking the termination predicate under the state
     /// lock, then repairs the watch value after releasing that lock if needed.
+    ///
+    /// # Returns
+    ///
+    /// A receiver that observes termination, including when the service had
+    /// already terminated before the subscription was created.
     #[cfg(feature = "async-wait")]
     pub(crate) fn subscribe_termination(&self) -> watch::Receiver<bool> {
         // Subscribe before checking state. If termination races with this
@@ -186,6 +191,12 @@ impl RayonExecutorServiceState {
     /// # Parameters
     ///
     /// * `job` - Owned job to accept into the queue.
+    ///
+    /// # Returns
+    ///
+    /// An [`Admission`] containing the assigned task identifier and number of
+    /// worker closures to dispatch when accepted, or the error and original
+    /// job when admission is rejected.
     ///
     /// # Type Parameters
     ///
@@ -441,6 +452,11 @@ impl RayonExecutorServiceState {
     ///
     /// * `inner` - Locked service state used to determine whether all work
     ///   ended.
+    ///
+    /// # Returns
+    ///
+    /// `true` when termination is observed and waiters are notified; `false`
+    /// while the service is running or accepted tasks remain.
     fn notify_if_terminated_locked(&self, inner: &RayonExecutorServiceInner) -> bool {
         if inner.lifecycle != ExecutorServiceLifecycle::Running && occupied(inner) == 0 {
             self.terminated.notify_all();
@@ -456,6 +472,10 @@ impl RayonExecutorServiceState {
 /// # Parameters
 ///
 /// * `inner` - Service state containing queued, running, and cancelling tasks.
+///
+/// # Returns
+///
+/// The combined number of queued, running, and cancelling accepted tasks.
 fn occupied(inner: &RayonExecutorServiceInner) -> usize {
     inner.queue.len() + inner.running + inner.cancelling.len()
 }

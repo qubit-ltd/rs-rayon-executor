@@ -25,9 +25,13 @@ use std::time::Instant;
 
 static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Captured output and timeout status from a bounded child process.
 pub(crate) struct BoundedOutput {
+    /// Child process status and captured standard streams.
     pub(crate) output: Output,
+    /// Temporary files that captured standard output and standard error.
     pub(crate) log_paths: [PathBuf; 2],
+    /// Whether the direct child exceeded its deadline.
     pub(crate) timed_out: bool,
 }
 
@@ -166,6 +170,10 @@ fn wait_for_child(
 ///
 /// A timeout kills and waits for the direct child. It does not promise to
 /// terminate descendants that the child may have started.
+///
+/// # Returns
+///
+/// The child status, captured output streams, log paths, and timeout status.
 pub(crate) fn run_bounded_output(command: &mut Command, timeout: Duration) -> io::Result<BoundedOutput> {
     let (logs, stdout_file, stderr_file) = OutputLogs::create()?;
     let spawned = command

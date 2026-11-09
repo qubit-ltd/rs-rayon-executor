@@ -10,6 +10,7 @@
 use std::alloc::GlobalAlloc;
 use std::alloc::Layout;
 use std::alloc::System;
+use std::cell::Cell;
 use std::future::Future;
 use std::hint::black_box;
 use std::io;
@@ -356,4 +357,3 @@ fn percentile(samples: &[u128], percent: usize) -> u128 {
     sorted.sort_unstable();
     sorted[(sorted.len() - 1) * percent / 100]
 }
-use std::cell::Cell;

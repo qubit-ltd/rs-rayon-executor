@@ -17,6 +17,7 @@ use std::time::Duration;
 use qubit_executor::CancelResult;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
+use qubit_executor::service::SubmissionError;
 use qubit_rayon_executor::RayonExecutorService;
 
 struct DropProbe(Arc<AtomicUsize>);
@@ -180,7 +181,7 @@ fn test_cancel_keeps_capacity_until_capture_cleanup_finishes() {
     assert_eq!(service.stats().cancelling, 1);
     assert!(matches!(
         service.submit_callable(|| Ok::<(), io::Error>(())),
-        Err(qubit_executor::service::SubmissionError::Saturated)
+        Err(SubmissionError::Saturated)
     ));
 
     cleanup_release.release();

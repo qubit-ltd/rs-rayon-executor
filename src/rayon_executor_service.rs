@@ -76,6 +76,31 @@ pub struct RayonExecutorService {
 }
 
 impl RayonExecutorService {
+    /// Creates a Rayon executor service with the default builder settings.
+    ///
+    /// # Returns
+    ///
+    /// A service using the detected CPU parallelism and the default bounded
+    /// task capacity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RayonExecutorServiceBuildError`] when Rayon rejects the
+    /// default thread-pool configuration.
+    pub fn new() -> Result<Self, RayonExecutorServiceBuildError> {
+        Self::builder().build()
+    }
+
+    /// Creates a builder for configuring a Rayon executor service.
+    ///
+    /// # Returns
+    ///
+    /// A builder initialized with CPU-parallelism defaults.
+    #[inline]
+    pub fn builder() -> RayonExecutorServiceBuilder {
+        RayonExecutorServiceBuilder::default()
+    }
+
     /// Tries to submit a callable, returning the original callable on
     /// rejection.
     ///
@@ -118,31 +143,6 @@ impl RayonExecutorService {
             }
             Err((reason, job)) => Err(RejectedTask::new(reason, job.into_task())),
         }
-    }
-
-    /// Creates a Rayon executor service with the default builder settings.
-    ///
-    /// # Returns
-    ///
-    /// A service using the detected CPU parallelism and the default bounded
-    /// task capacity.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RayonExecutorServiceBuildError`] when Rayon rejects the
-    /// default thread-pool configuration.
-    pub fn new() -> Result<Self, RayonExecutorServiceBuildError> {
-        Self::builder().build()
-    }
-
-    /// Creates a builder for configuring a Rayon executor service.
-    ///
-    /// # Returns
-    ///
-    /// A builder initialized with CPU-parallelism defaults.
-    #[inline]
-    pub fn builder() -> RayonExecutorServiceBuilder {
-        RayonExecutorServiceBuilder::default()
     }
 
     /// Waits asynchronously for shutdown or stop and all accepted work.
@@ -200,13 +200,6 @@ impl RayonExecutorService {
 
     /// Admits a detached runnable and schedules it for Rayon execution.
     ///
-    /// # Errors
-    ///
-    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
-    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    /// The submitted task is consumed on either error; retain or reconstruct
-    /// its inputs before retrying.
-    ///
     /// # Type Parameters
     ///
     /// * `T` - Runnable submitted for execution.
@@ -215,6 +208,17 @@ impl RayonExecutorService {
     /// # Parameters
     ///
     /// * `task` - Detached runnable to execute.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the runnable is accepted and scheduled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
+    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
     fn submit_runnable<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -281,13 +285,6 @@ impl ExecutorService for RayonExecutorService {
 
     /// Accepts a runnable and schedules it on the Rayon thread pool.
     ///
-    /// # Errors
-    ///
-    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
-    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    /// The submitted task is consumed on either error; retain or reconstruct
-    /// its inputs before retrying.
-    ///
     /// # Type Parameters
     ///
     /// * `T` - Runnable submitted for execution.
@@ -296,6 +293,18 @@ impl ExecutorService for RayonExecutorService {
     /// # Parameters
     ///
     /// * `task` - Runnable to execute.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the runnable is accepted and scheduled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
+    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    #[inline]
     fn submit<T, E>(&self, task: T) -> Result<(), SubmissionError>
     where
         T: Runnable<E> + Send + 'static,
@@ -306,13 +315,6 @@ impl ExecutorService for RayonExecutorService {
 
     /// Accepts a callable and returns a handle for its eventual result.
     ///
-    /// # Errors
-    ///
-    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
-    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    /// The submitted task is consumed on either error; retain or reconstruct
-    /// its inputs before retrying.
-    ///
     /// # Type Parameters
     ///
     /// * `C` - Callable submitted for execution.
@@ -322,6 +324,18 @@ impl ExecutorService for RayonExecutorService {
     /// # Parameters
     ///
     /// * `task` - Callable to execute.
+    ///
+    /// # Returns
+    ///
+    /// A result handle when the callable is accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
+    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
+    #[inline]
     fn submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -334,13 +348,6 @@ impl ExecutorService for RayonExecutorService {
 
     /// Accepts a callable and returns a tracked handle for its eventual result.
     ///
-    /// # Errors
-    ///
-    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
-    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
-    /// The submitted task is consumed on either error; retain or reconstruct
-    /// its inputs before retrying.
-    ///
     /// # Type Parameters
     ///
     /// * `C` - Callable submitted for execution.
@@ -350,6 +357,17 @@ impl ExecutorService for RayonExecutorService {
     /// # Parameters
     ///
     /// * `task` - Callable to execute and track.
+    ///
+    /// # Returns
+    ///
+    /// A tracked result handle when the callable is accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubmissionError::Shutdown`] after shutdown or stop, and
+    /// [`SubmissionError::Saturated`] when the accepted-task capacity is full.
+    /// The submitted task is consumed on either error; retain or reconstruct
+    /// its inputs before retrying.
     fn submit_tracked_callable<C, R, E>(&self, task: C) -> Result<Self::TrackedHandle<R, E>, SubmissionError>
     where
         C: Callable<R, E> + Send + 'static,
@@ -372,6 +390,7 @@ impl ExecutorService for RayonExecutorService {
     ///
     /// This operation is idempotent and changes subsequent submission errors
     /// to [`SubmissionError::Shutdown`].
+    #[inline]
     fn shutdown(&self) {
         self.state.shutdown();
     }
@@ -383,11 +402,15 @@ impl ExecutorService for RayonExecutorService {
     /// cleanup and is not bounded by this method. During cleanup, tasks remain
     /// counted as cancelling until their cleanup finishes; a cancellation
     /// result becoming visible does not itself release capacity. Running CPU
-    /// work is not forcibly interrupted. The returned report distinguishes
-    /// running, queued, and cancelled tasks.
+    /// work is not forcibly interrupted. The report distinguishes running,
+    /// queued, and cancelled tasks.
     ///
     /// Avoid calling this from cleanup code that synchronously waits for
     /// termination, since that can wait on the cleanup currently in progress.
+    ///
+    /// # Returns
+    ///
+    /// A report containing counts for running, queued, and cancelled tasks.
     fn stop(&self) -> StopReport {
         let (report, jobs) = self.state.stop();
         for (task_id, job) in jobs {
@@ -400,17 +423,32 @@ impl ExecutorService for RayonExecutorService {
     }
 
     /// Returns the current lifecycle state derived from the shared counters.
+    ///
+    /// # Returns
+    ///
+    /// The service lifecycle state.
+    #[inline]
     fn lifecycle(&self) -> ExecutorServiceLifecycle {
         self.state.lifecycle()
     }
 
     /// Returns whether shutdown or stop has been requested.
+    ///
+    /// # Returns
+    ///
+    /// `true` once shutdown or stop has ended task admission.
+    #[inline]
     fn is_not_running(&self) -> bool {
         self.state.is_not_running()
     }
 
     /// Returns whether every accepted task has reached a terminal state after
     /// shutdown or stop.
+    ///
+    /// # Returns
+    ///
+    /// `true` when all accepted tasks are terminal after shutdown or stop.
+    #[inline]
     fn is_terminated(&self) -> bool {
         self.lifecycle() == ExecutorServiceLifecycle::Terminated
     }

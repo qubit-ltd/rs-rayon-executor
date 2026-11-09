@@ -72,72 +72,6 @@ impl<R, E> RayonTaskHandle<R, E> {
         Self { inner, task_id, state }
     }
 
-    /// Blocks until the task finishes and returns its final result.
-    ///
-    /// # Blocking and Deadlocks
-    ///
-    /// Do not block a worker on a queued task from the same pool when no
-    /// worker remains available to execute that task. For example, submitting
-    /// a child task and calling `get` from the only worker deadlocks. Wait
-    /// outside the pool, or decompose the computation with Rayon `join` or
-    /// `scope` as appropriate.
-    ///
-    /// # Returns
-    ///
-    /// The final task result reported through the underlying tracked task.
-    ///
-    /// # Errors
-    ///
-    /// The returned [`TaskResult`] reports user failure, task cancellation, or
-    /// a user-task panic through its task-execution error variant.
-    #[inline]
-    pub fn get(self) -> TaskResult<R, E>
-    where
-        R: Send,
-        E: Send,
-    {
-        self.inner.get()
-    }
-
-    /// Attempts to retrieve the final result without blocking.
-    ///
-    /// # Returns
-    ///
-    /// `TryGet::Ready` with the final task result, or `TryGet::Pending` with
-    /// this handle when the task has not reached a terminal state.
-    #[inline]
-    pub fn try_get(self) -> TryGet<Self, R, E>
-    where
-        R: Send,
-        E: Send,
-    {
-        <Self as TaskResultHandle<R, E>>::try_get(self)
-    }
-
-    /// Attempts to cancel the task before any Rayon worker starts it.
-    ///
-    /// If this call claims the queued task, its cleanup, including captured
-    /// values' destructors, runs synchronously on this caller's thread and can
-    /// take as long as that cleanup takes. The task remains counted as
-    /// cancelling until cleanup finishes, even if its cancellation result is
-    /// already observable. Do not synchronously wait here for termination
-    /// that depends on this cleanup completing.
-    ///
-    /// # Returns
-    ///
-    /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a
-    /// worker claims it, or `AlreadyFinished` after a terminal result exists.
-    #[inline]
-    pub fn cancel(&self) -> CancelResult
-    where
-        R: Send,
-        E: Send,
-    {
-        cancel_task(&self.state, self.task_id, || {
-            cancellation_result_for_status(self.status())
-        })
-    }
-
     /// Creates an independent endpoint that can cancel this task after this
     /// result handle is consumed into a future.
     ///
@@ -145,6 +79,11 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// remains best-effort and can only claim work before a Rayon worker starts
     /// it. If this endpoint claims queued work, captured-value cleanup runs
     /// synchronously on the calling thread.
+    ///
+    /// # Returns
+    ///
+    /// An independent endpoint that can attempt cancellation while this
+    /// handle is retained for observing the task result.
     #[must_use]
     pub fn cancellation_handle(&self) -> TaskCancellationHandle
     where
@@ -190,6 +129,73 @@ impl<R, E> RayonTaskHandle<R, E> {
     pub fn status(&self) -> TaskStatus {
         self.inner.status()
     }
+
+    /// Blocks until the task finishes and returns its final result.
+    ///
+    /// # Blocking and Deadlocks
+    ///
+    /// Do not block a worker on a queued task from the same pool when no
+    /// worker remains available to execute that task. For example, submitting
+    /// a child task and calling `get` from the only worker deadlocks. Wait
+    /// outside the pool, or decompose the computation with Rayon `join` or
+    /// `scope` as appropriate.
+    ///
+    /// # Returns
+    ///
+    /// The final task result reported through the underlying tracked task.
+    ///
+    /// # Errors
+    ///
+    /// The returned [`TaskResult`] reports user failure, task cancellation, or
+    /// a user-task panic through its task-execution error variant.
+    #[inline]
+    pub fn get(self) -> TaskResult<R, E>
+    where
+        R: Send,
+        E: Send,
+    {
+        self.inner.get()
+    }
+
+    /// Attempts to retrieve the final result without blocking.
+    ///
+    /// # Returns
+    ///
+    /// `TryGet::Ready` with the final task result, or `TryGet::Pending` with
+    /// this handle when the task has not reached a terminal state.
+    #[must_use]
+    #[inline]
+    pub fn try_get(self) -> TryGet<Self, R, E>
+    where
+        R: Send,
+        E: Send,
+    {
+        <Self as TaskResultHandle<R, E>>::try_get(self)
+    }
+
+    /// Attempts to cancel the task before any Rayon worker starts it.
+    ///
+    /// If this call claims the queued task, its cleanup, including captured
+    /// values' destructors, runs synchronously on this caller's thread and can
+    /// take as long as that cleanup takes. The task remains counted as
+    /// cancelling until cleanup finishes, even if its cancellation result is
+    /// already observable. Do not synchronously wait here for termination
+    /// that depends on this cleanup completing.
+    ///
+    /// # Returns
+    ///
+    /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a
+    /// worker claims it, or `AlreadyFinished` after a terminal result exists.
+    #[inline]
+    pub fn cancel(&self) -> CancelResult
+    where
+        R: Send,
+        E: Send,
+    {
+        cancel_task(&self.state, self.task_id, || {
+            cancellation_result_for_status(self.status())
+        })
+    }
 }
 
 impl<R, E> TaskResultHandle<R, E> for RayonTaskHandle<R, E>
@@ -198,18 +204,31 @@ where
     E: Send,
 {
     /// Returns whether the inner tracked task is done.
+    ///
+    /// # Returns
+    ///
+    /// `true` after the task reaches a terminal state; otherwise `false`.
     #[inline]
     fn is_done(&self) -> bool {
         self.inner.is_done()
     }
 
     /// Blocks until the inner tracked task yields a final result.
+    ///
+    /// # Returns
+    ///
+    /// The published task result or task-execution error.
     #[inline]
     fn get(self) -> TaskResult<R, E> {
         self.inner.get()
     }
 
     /// Attempts to retrieve the inner tracked task result without blocking.
+    ///
+    /// # Returns
+    ///
+    /// `Ready` with the final result, or `Pending` with this handle while the
+    /// task has not reached a terminal state.
     #[inline]
     fn try_get(self) -> TryGet<Self, R, E> {
         let Self { inner, task_id, state } = self;
@@ -226,12 +245,21 @@ where
     E: Send,
 {
     /// Returns the currently observed task status.
+    ///
+    /// # Returns
+    ///
+    /// A snapshot of the task's pending, running, or terminal status.
     #[inline]
     fn status(&self) -> TaskStatus {
         self.inner.status()
     }
 
     /// Cancels the task through the owning service state.
+    ///
+    /// # Returns
+    ///
+    /// Whether cancellation claimed the queued task or it was already running
+    /// or finished.
     #[inline]
     fn cancel(&self) -> CancelResult {
         cancel_task(&self.state, self.task_id, || {
@@ -247,6 +275,11 @@ where
 {
     /// Creates an independent endpoint that preserves Rayon job cleanup and
     /// cancellation accounting.
+    ///
+    /// # Returns
+    ///
+    /// A cancellation endpoint that retains the service's queued-job cleanup
+    /// and accounting behavior.
     #[inline]
     fn cancellation_handle(&self) -> TaskCancellationHandle {
         RayonTaskHandle::cancellation_handle(self)
@@ -310,6 +343,10 @@ impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
     type IntoFuture = TaskHandleFuture<R, E>;
 
     /// Converts this handle into a future resolving to the task result.
+    ///
+    /// # Returns
+    ///
+    /// A future that resolves to the tracked task's result.
     #[inline]
     fn into_future(self) -> Self::IntoFuture {
         self.inner.into_future()
