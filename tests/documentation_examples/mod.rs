@@ -31,6 +31,7 @@ enum Role {
     GuideAggregate,
     StopHelper,
     CapacityRetry,
+    GenericRecoverable,
     TrackedCancellation,
 }
 
@@ -41,6 +42,7 @@ impl Role {
             Self::GuideAggregate => "guide synchronous aggregate program",
             Self::StopHelper => "async stop helper",
             Self::CapacityRetry => "capacity retry program",
+            Self::GenericRecoverable => "generic recoverable submission program",
             Self::TrackedCancellation => "tracked cancellation program",
         }
     }
@@ -102,21 +104,23 @@ fn parse_document(path: &'static str, source: &str) -> Result<Document, String> 
         "README.md" => (1, &[(0, Role::ReadmeMinimum, "Quick Start")]),
         "README.zh_CN.md" => (1, &[(0, Role::ReadmeMinimum, "快速开始")]),
         "doc/user_guide.md" => (
-            4,
+            5,
             &[
                 (0, Role::GuideAggregate, "Core Workflow"),
                 (1, Role::StopHelper, "Async shutdown"),
                 (2, Role::CapacityRetry, "Async shutdown"),
-                (3, Role::TrackedCancellation, "Advanced Usage"),
+                (3, Role::GenericRecoverable, "Generic recoverable submission"),
+                (4, Role::TrackedCancellation, "Advanced Usage"),
             ],
         ),
         "doc/user_guide.zh_CN.md" => (
-            4,
+            5,
             &[
                 (0, Role::GuideAggregate, "核心工作流"),
                 (1, Role::StopHelper, "异步关闭与容量等待"),
                 (2, Role::CapacityRetry, "异步关闭与容量等待"),
-                (3, Role::TrackedCancellation, "进阶用法"),
+                (3, Role::GenericRecoverable, "泛型恢复提交"),
+                (4, Role::TrackedCancellation, "进阶用法"),
             ],
         ),
         _ => return Err(format!("{path}: no role inventory is configured")),

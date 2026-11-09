@@ -55,7 +55,8 @@ CPU 密集型任务适合由 Rayon 调度；耗时的阻塞 IO 会占用本应�
 
 - `RayonExecutorService` 及其 builder：创建可配置的 Rayon 池。
 - 支持无需结果、只需结果和 tracked 三类提交；tracked 句柄可查询状态，并尽力取消尚未开始的任务。
-- `try_submit_callable` 在拒绝接纳时归还原 callable；现有提交方法仍会在拒绝时消费任务。重试方法见[用户手册](doc/user_guide.zh_CN.md)。
+- `try_submit_callable` 在拒绝接纳时归还原 callable；现有提交方法仍会在拒绝时消费任务。
+  `RayonExecutorService` 也实现了共享的 `RecoverableExecutorService` trait。两种拒绝类型的区别及重试方法见[用户手册](doc/user_guide.zh_CN.md)。
 - 已接纳任务默认容量为 1024，达到上限时返回 `SubmissionError::Saturated`。
 - `stats()` 提供一致状态快照；启用 `async-wait` feature 后还可异步等待终止并订阅容量变化。
 - `shutdown` 会完成已接纳的任务；`stop` 会取消排队任务，但二者都无法强制停止已经运行的 CPU 任务。

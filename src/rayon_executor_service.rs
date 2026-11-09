@@ -83,7 +83,11 @@ impl RayonExecutorService {
     /// internal unique task identifiers, it stops accepting work and returns
     /// [`SubmissionError::Shutdown`]; already accepted work may still finish.
     /// The callable is never run or dropped when rejected; its owner is
-    /// returned in [`RejectedTask`].
+    /// returned in this crate's [`RejectedTask`]. The shared
+    /// [`RecoverableExecutorService`] trait method returns
+    /// [`qubit_executor::service::RejectedTask`] instead. Calling this method
+    /// on `RayonExecutorService` resolves to this inherent method even when the
+    /// trait is in scope; generic callers can use the trait method explicitly.
     ///
     /// # Type Parameters
     ///

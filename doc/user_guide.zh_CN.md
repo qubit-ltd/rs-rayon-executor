@@ -160,6 +160,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `stats()` 返回在服务状态锁内采样的一致快照。`queued`、`running` 和 `cancelling` 都会占用容量。任务从队列移除后，`cancelling` 仍会统计尚未完成的清理。结果可用与取消清理完成可能存在短暂时间差；观察或收取结果本身不会释放容量。
 
+## 泛型恢复提交
+
+固有方法和共享 trait 方法的拒绝值类型不同。通过
+`RecoverableExecutorService` 调用（例如下面的泛型辅助函数）会返回
+`qubit_executor::service::RejectedTask<C>`；直接在 `RayonExecutorService`
+上调用则返回本 crate 自己的 `RejectedTask<C>`。即使导入了 trait，具体类型的
+固有方法仍优先匹配，因此不会改变原有调用的返回类型。两种拒绝值都会归还原
+callable；调用 `into_parts()` 可分别取出拒绝原因和任务。原有消费型提交方法在
+拒绝时仍会消费任务。
+
+下面是完整的同步泛型示例：已接纳的任务返回 42；服务关闭后再次提交会得到
+`Shutdown` 和原任务。这个 trait 不会自动等待容量释放，也不会自动重试；使用容量
+通知仍须启用上文所述的独立 `async-wait` feature。
+
+```rust
+use std::io;
+use qubit_executor::service::{ExecutorService, RecoverableExecutorService, RejectedTask};
+use qubit_rayon_executor::RayonExecutorService;
+
+fn submit_generic<S, C>(service: &S, task: C)
+    -> Result<S::ResultHandle<usize, io::Error>, RejectedTask<C>>
+where
+    S: RecoverableExecutorService,
+    C: FnMut() -> Result<usize, io::Error> + Send + 'static,
+{
+    service.try_submit_callable(task)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(1).build()?;
+    let handle = submit_generic(&service, || Ok::<usize, io::Error>(42))?;
+    service.shutdown();
+    service.wait_termination();
+    assert_eq!(handle.get()?, 42);
+    let rejected = match submit_generic(&service, || Ok::<usize, io::Error>(7)) {
+        Err(rejected) => rejected,
+        Ok(_) => panic!("shutdown service accepted a task"),
+    };
+    let (reason, _task) = rejected.into_parts();
+    assert_eq!(reason, qubit_executor::service::SubmissionError::Shutdown);
+    Ok(())
+}
+```
+
 ## 进阶用法
 
 tracked 句柄支持查询状态和取消。任务仍在队列中时取消会成功；已运行的任务报告 `AlreadyRunning`，已完成的任务报告 `AlreadyFinished`。

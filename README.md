@@ -62,8 +62,10 @@ Use `qubit-thread-pool` for synchronous work that may block on IO, and
 - Detached, result-only, and tracked submissions; tracked handles expose status
   and best-effort cancellation before a worker starts the task.
 - `try_submit_callable` returns the original callable when admission is rejected;
-  existing submission methods keep consuming the task on rejection. See the
-  [user guide](doc/user_guide.md) for retry handling.
+  existing submission methods keep consuming the task on rejection.
+  `RayonExecutorService` also implements the shared
+  `RecoverableExecutorService` trait. See the [user guide](doc/user_guide.md)
+  for retry handling and the distinction between its rejection types.
 - A default accepted-task capacity of 1024 and `SubmissionError::Saturated` at
   capacity.
 - Consistent `stats()` snapshots, plus optional async termination and capacity

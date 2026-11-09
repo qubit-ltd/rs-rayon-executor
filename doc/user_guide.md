@@ -212,6 +212,52 @@ the queue. A result becoming available and a cancellation cleanup finishing
 can occur at slightly different times; observing or collecting a result does
 not itself release capacity.
 
+## Generic recoverable submission
+
+The inherent method and the shared trait method have different rejection types.
+A call through `RecoverableExecutorService` (as in this generic helper) returns
+`qubit_executor::service::RejectedTask<C>`. A direct call on
+`RayonExecutorService` returns this crate's `RejectedTask<C>`. Importing the
+trait does not change method resolution: the concrete type's inherent method
+still takes precedence. Both rejected values return ownership of the original
+callable, and `into_parts()` provides its reason and callable. The existing
+consuming submission methods continue to consume the task on rejection.
+
+This synchronous example is the complete generic path. It returns 42 from an
+accepted task, then confirms a later task is returned with `Shutdown`. The trait
+adds no automatic wait or capacity retry; using a capacity notification still
+requires the separate `async-wait` feature described above.
+
+```rust
+use std::io;
+use qubit_executor::service::{ExecutorService, RecoverableExecutorService, RejectedTask};
+use qubit_rayon_executor::RayonExecutorService;
+
+fn submit_generic<S, C>(service: &S, task: C)
+    -> Result<S::ResultHandle<usize, io::Error>, RejectedTask<C>>
+where
+    S: RecoverableExecutorService,
+    C: FnMut() -> Result<usize, io::Error> + Send + 'static,
+{
+    service.try_submit_callable(task)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = RayonExecutorService::builder().num_threads(1).build()?;
+    let handle = submit_generic(&service, || Ok::<usize, io::Error>(42))?;
+    service.shutdown();
+    service.wait_termination();
+    assert_eq!(handle.get()?, 42);
+    let rejected = match submit_generic(&service, || Ok::<usize, io::Error>(7)) {
+        Err(rejected) => rejected,
+        Ok(_) => panic!("shutdown service accepted a task"),
+    };
+    let (reason, _task) = rejected.into_parts();
+    assert_eq!(reason, qubit_executor::service::SubmissionError::Shutdown);
+    Ok(())
+}
+```
+
 ## Advanced Usage
 
 Tracked handles support status and cancellation. Cancellation succeeds only
