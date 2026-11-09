@@ -466,10 +466,7 @@ impl RecoverableExecutorService for RayonExecutorService {
     ///
     /// Returns the result handle on acceptance, or the rejection reason and
     /// original callable on rejection.
-    fn try_submit_callable<C, R, E>(
-        &self,
-        task: C,
-    ) -> Result<Self::ResultHandle<R, E>, ExecutorRejectedTask<C>>
+    fn try_submit_callable<C, R, E>(&self, task: C) -> Result<Self::ResultHandle<R, E>, ExecutorRejectedTask<C>>
     where
         C: Callable<R, E> + Send + 'static,
         R: Send + 'static,
