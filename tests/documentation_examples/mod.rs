@@ -198,7 +198,8 @@ fn test_capacity_retry_original_main_compile_error_is_reported() {
     let source = fs::read_to_string("doc/user_guide.md").expect("read English user guide");
     let document = parse_document("doc/user_guide.md", &source).expect("parse English user guide");
     let block = document.rust[&Role::CapacityRetry].clone();
-    let fixture = Fixture::new(true);
+    let cache = BuildCache::new();
+    let fixture = Fixture::new(true, &cache);
     fixture.write_manifest(document.path, &document.blocks, true);
 
     let malformed = capacity_retry_with_invalid_main(&block);
@@ -215,6 +216,7 @@ fn test_capacity_retry_original_main_compile_error_is_reported() {
 }
 
 pub(crate) fn check_all_documents() {
+    let cache = BuildCache::new();
     let paths = [
         "README.md",
         "README.zh_CN.md",
@@ -238,14 +240,14 @@ pub(crate) fn check_all_documents() {
         docs[3].rust.keys().collect::<Vec<_>>()
     );
     for doc in docs {
-        check_document(doc);
+        check_document(doc, &cache);
     }
 }
 
-fn check_document(doc: Document) {
+fn check_document(doc: Document, cache: &BuildCache) {
     for (role, block) in doc.rust {
         let asynchronous = matches!(role, Role::StopHelper | Role::CapacityRetry);
-        let fixture = Fixture::new(asynchronous);
+        let fixture = Fixture::new(asynchronous, cache);
         fixture.write_manifest(doc.path, &doc.blocks, asynchronous);
         if role == Role::CapacityRetry {
             let original = format!("example_{}_original", role as usize);
@@ -298,13 +300,45 @@ struct Fixture {
     asynchronous: bool,
 }
 
+struct BuildCache {
+    root: PathBuf,
+    target: PathBuf,
+}
+
+impl BuildCache {
+    fn new() -> Self {
+        let temp = std::env::temp_dir();
+        let root = loop {
+            let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let candidate = temp.join(format!("rre-doc-build-cache-{}-{id}", std::process::id()));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create documentation build cache {}: {error}", candidate.display()),
+            }
+        };
+        let target = root.join("target");
+        if let Err(error) = fs::create_dir(&target) {
+            let _ = fs::remove_dir_all(&root);
+            panic!("create documentation build cache {}: {error}", target.display());
+        }
+        Self { root, target }
+    }
+}
+
+impl Drop for BuildCache {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 impl Fixture {
-    fn new(asynchronous: bool) -> Self {
+    fn new(asynchronous: bool, cache: &BuildCache) -> Self {
         let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("rre-doc-examples-{}-{id}", std::process::id()));
         fs::create_dir_all(root.join("src/bin")).expect("create temporary documentation fixture");
         Self {
-            target: root.join("target"),
+            target: cache.target.clone(),
             root,
             asynchronous,
         }
@@ -458,6 +492,8 @@ mod subprocess_error_tests {
     use std::panic::AssertUnwindSafe;
     use std::process::Command;
 
+    use super::BuildCache;
+    use super::Fixture;
     use super::Role;
     use super::run_bounded;
 
@@ -490,5 +526,29 @@ mod subprocess_error_tests {
             !message.contains("stderr summary:"),
             "spawn failure has no child output"
         );
+    }
+
+    #[test]
+    fn test_documentation_fixtures_share_cache_without_sharing_sources() {
+        let cache = BuildCache::new();
+        let cache_root = cache.root.clone();
+        let target = cache.target.clone();
+        let first = Fixture::new(false, &cache);
+        let second = Fixture::new(true, &cache);
+        let first_root = first.root.clone();
+        let second_root = second.root.clone();
+        assert_ne!(first_root, second_root);
+        assert_eq!(first.target, target);
+        assert_eq!(second.target, target);
+        assert!(target.starts_with(&cache_root));
+        drop(first);
+        assert!(!first_root.exists());
+        assert!(second_root.exists());
+        assert!(cache_root.exists());
+        assert!(target.exists());
+        drop(second);
+        assert!(!second_root.exists());
+        drop(cache);
+        assert!(!cache_root.exists());
     }
 }
