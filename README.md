@@ -85,6 +85,22 @@ see the [API documentation](https://docs.rs/qubit-rayon-executor) or the
 
 ## Testing
 
+For source development, keep a compatible `rs-executor` checkout next to this
+repository. The current path dependency requires `qubit-executor` `^0.9.1`
+(0.9.1 or a compatible later 0.9 release; 0.9.0 does not satisfy it).
+Documentation example tests also patch this dependency to the sibling source.
+
+    parent/
+    ├── rs-executor/
+    └── rs-rayon-executor/
+
+From this repository, run `./.infra/bin/prepare-local-path-dependencies.sh`
+to prepare missing local path dependencies before the test commands below.
+This preparation may access the network and create sibling checkouts. Inspect
+and preserve existing sibling repository changes first; do not reset or replace
+them. If a compatible checkout is already present, proceed directly to testing.
+These source-development prerequisites do not apply to crates.io installation.
+
 ```bash
 # Run tests with the default feature set
 cargo test
@@ -111,6 +127,7 @@ full license text.
 Contributions are welcome. Please follow the Rust API guidelines, keep public
 API documentation and tests current, and run `./.infra/bin/align-ci.sh` to format code and
 `./.infra/bin/ci-check.sh` to satisfy CI requirements before submitting a pull request.
+For source-development dependency setup, see [Testing](#testing).
 
 ## Author
 

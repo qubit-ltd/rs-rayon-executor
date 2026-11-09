@@ -69,6 +69,19 @@ CPU 密集型任务适合由 Rayon 调度；耗时的阻塞 IO 会占用本应�
 
 ## 测试
 
+从源码参与开发时，请在本仓库旁保留兼容的 `rs-executor` checkout。
+当前路径依赖要求 `qubit-executor` `^0.9.1`，即 0.9.1 或后续兼容的
+0.9 版本；0.9.0 不满足要求。文档示例测试也会将该依赖 patch 到相邻源码。
+
+    parent/
+    ├── rs-executor/
+    └── rs-rayon-executor/
+
+在本仓库中运行 `./.infra/bin/prepare-local-path-dependencies.sh`，
+准备缺少的本地路径依赖，再执行下列测试命令。该准备过程可能联网并创建相邻
+checkout；请先检查并保留已有相邻仓库的修改，不要重置或替换它们。
+已有兼容 checkout 时可直接测试。这些源码开发前置条件不适用于 crates.io 安装。
+
 ```bash
 # 使用默认 feature 集运行测试
 cargo test
@@ -94,6 +107,7 @@ Copyright (c) 2025 - 2026. Haixing Hu. All rights reserved.
 
 欢迎贡献。请遵循 Rust API 指南，及时更新公共 API 文档与测试，并在提交
 Pull Request 前运行 `./.infra/bin/align-ci.sh`格式化代码，运行`./.infra/bin/ci-check.sh`对齐CI要求。
+源码开发依赖准备说明请参阅[测试](#测试)。
 
 ## 作者
 
