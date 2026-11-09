@@ -5,7 +5,10 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+mod common;
+
 use std::io;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -180,7 +183,41 @@ impl Drop for ReentrantDrop {
 }
 
 #[test]
+fn test_legacy_rejections_child() {
+    if std::env::var("RXE_REJECTION_CHILD").as_deref() != Ok("1") {
+        return;
+    }
+    legacy_rejections_scenario();
+    println!("RXE_REJECTION_CHILD_OK");
+}
+
+#[test]
 fn test_legacy_rejections_consume_tasks_and_drop_outside_state_lock() {
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    command
+        .args(["--exact", "test_legacy_rejections_child", "--nocapture"])
+        .env("RXE_REJECTION_CHILD", "1");
+    let result = common::subprocess::run_bounded_output(&mut command, Duration::from_secs(20))
+        .expect("run legacy rejection child");
+    let stdout = String::from_utf8_lossy(&result.output.stdout);
+    let stderr = String::from_utf8_lossy(&result.output.stderr);
+    assert!(
+        !result.timed_out && result.output.status.success(),
+        "legacy rejection child: deadline=20s, timed_out={}, status={}\nstdout:\n{}\nstderr:\n{}",
+        result.timed_out,
+        result.output.status,
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.lines().any(|line| line == "RXE_REJECTION_CHILD_OK"),
+        "legacy rejection child did not complete its scenario\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}
+
+fn legacy_rejections_scenario() {
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .task_capacity(1)
