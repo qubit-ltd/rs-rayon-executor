@@ -154,7 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-饱和时，原任务值仍由同一个 callable 持有；只有接纳成功才会将其移入执行池。`rs-execution-services` 的 CPU 分支可用此循环替代 `OwnedWaitTask` 包装，blocking 分支仍需保留该 helper。此手册示例用 Tokio 驱动异步等待，因此需要启用上方的 `async-wait` feature。
+饱和时，原任务值仍由同一个 callable 持有；只有接纳成功才会将其移入执行池。调用方可用此重试循环保留一次性输入，无需额外的共享所有权包装。此手册示例用 Tokio 驱动异步等待，因此需要启用上方的 `async-wait` feature。
 
 `CapacityChanges::borrow` 和 `borrow_and_update` 返回 Tokio watch guard，并持有读锁。应短时读取、复制 generation 后立即释放 guard。不要跨 `.await`、终止等待，或调用 `shutdown`、`stop`、`cancel` 等可能发布通知的操作持有 guard。需要保留数值时优先使用复制读取方法 `generation` 和 `generation_and_update`。generation 是可回绕的通知代数，不表示可用容量或严格事件数，读取也不会预留容量。
 

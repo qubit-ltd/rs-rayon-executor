@@ -201,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The one-shot input remains owned by the same callable through saturation and is moved into the pool only after admission succeeds. `rs-execution-services` can use this pattern to replace its CPU `OwnedWaitTask` wrapper; its blocking branch still needs that helper. This guide example uses Tokio to drive async waits and requires the `async-wait` feature described above.
+The one-shot input remains owned by the same callable through saturation and is moved into the pool only after admission succeeds. Callers can use this retry loop to retain one-shot inputs without an additional shared ownership wrapper. This guide example uses Tokio to drive async waits and requires the `async-wait` feature described above.
 
 `CapacityChanges::borrow` and `borrow_and_update` return Tokio watch guards that hold a read lock. Use them briefly, copy the generation, and drop the guard immediately. Do not hold a guard across `.await`, termination waits, or calls such as `shutdown`, `stop`, or `cancel` that can publish a notification. Prefer the copying methods `generation` and `generation_and_update` when retaining the value. The generation is a wrapping notification counter, not available capacity or a strict event count, and reading it does not reserve capacity.
 
