@@ -85,8 +85,9 @@ impl<R, E> RayonTaskHandle<R, E> {
     /// A `Cancelled` result can therefore be observable before that cleanup
     /// finishes. The cancellation path that claimed the work retains cleanup
     /// ownership, and the task remains counted against service capacity until
-    /// cleanup completes. Once the task has a terminal result, later calls
-    /// report `AlreadyFinished`.
+    /// cleanup completes. Terminal status can also become visible before a
+    /// worker releases its running count; independent endpoints report
+    /// `AlreadyFinished` in that interval.
     ///
     /// # Returns
     ///
@@ -101,6 +102,7 @@ impl<R, E> RayonTaskHandle<R, E> {
         let state = Arc::clone(&self.state);
         let task_id = self.task_id;
         let task = self.inner.cancellation_handle();
+        let observe_status = self.inner.status_observer();
         TaskCancellationHandle::new(move || {
             cancel_task(
                 &state,
@@ -108,7 +110,7 @@ impl<R, E> RayonTaskHandle<R, E> {
                 || task.cancel(),
                 || {
                     if state.is_running_task(task_id) {
-                        CancelResult::AlreadyRunning
+                        cancellation_result_for_status(observe_status())
                     } else {
                         task.cancel()
                     }
@@ -391,6 +393,7 @@ impl<R, E> IntoFuture for RayonTaskHandle<R, E> {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
+    use std::io;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
@@ -402,6 +405,47 @@ mod tests {
     use crate::internal::CallableJob;
     use crate::rayon_executor_service_state::RayonExecutorServiceState;
     use crate::rayon_task_handle::RayonTaskHandle;
+
+    fn assert_terminal_cancellation_classification<F>(callable: F, expected: TaskStatus)
+    where
+        F: FnOnce() -> Result<usize, io::Error> + Send + 'static,
+    {
+        let state = RayonExecutorServiceState::new(1, 1);
+        let (tracked, slot) = TaskEndpointPair::<usize, io::Error>::new().into_tracked_parts();
+        let mut callable = Some(callable);
+        let job = CallableJob::new(
+            move || callable.take().expect("callable should run once")(),
+            slot,
+        );
+        let admission = match state.admit(Box::new(job)) {
+            Ok(admission) => admission,
+            Err(_) => panic!("task should be admitted"),
+        };
+        let handle = RayonTaskHandle::new(tracked, admission.task_id, Arc::clone(&state));
+        let cancellation = handle.cancellation_handle();
+        let (task_id, job) = state.take_next().expect("worker should take admitted task");
+
+        job.run();
+        assert_eq!(handle.status(), expected);
+        assert_eq!(state.stats().running, 1);
+        assert_eq!(handle.cancel(), CancelResult::AlreadyFinished);
+        assert_eq!(cancellation.cancel(), CancelResult::AlreadyFinished);
+        assert!(!state.finish_running(task_id));
+        assert_eq!(state.stats().running, 0);
+    }
+
+    #[test]
+    fn test_cancellation_endpoint_reports_finished_before_worker_accounting() {
+        assert_terminal_cancellation_classification(|| Ok(42), TaskStatus::Succeeded);
+        assert_terminal_cancellation_classification(
+            || Err(io::Error::other("task failure")),
+            TaskStatus::Failed,
+        );
+        assert_terminal_cancellation_classification(
+            || -> Result<usize, io::Error> { panic!("task panic") },
+            TaskStatus::Panicked,
+        );
+    }
 
     #[test]
     fn test_cancellation_endpoint_cannot_cancel_after_worker_takes_job_before_start() {
