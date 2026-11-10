@@ -413,10 +413,7 @@ mod tests {
         let state = RayonExecutorServiceState::new(1, 1);
         let (tracked, slot) = TaskEndpointPair::<usize, io::Error>::new().into_tracked_parts();
         let mut callable = Some(callable);
-        let job = CallableJob::new(
-            move || callable.take().expect("callable should run once")(),
-            slot,
-        );
+        let job = CallableJob::new(move || callable.take().expect("callable should run once")(), slot);
         let admission = match state.admit(Box::new(job)) {
             Ok(admission) => admission,
             Err(_) => panic!("task should be admitted"),
@@ -437,10 +434,7 @@ mod tests {
     #[test]
     fn test_cancellation_endpoint_reports_finished_before_worker_accounting() {
         assert_terminal_cancellation_classification(|| Ok(42), TaskStatus::Succeeded);
-        assert_terminal_cancellation_classification(
-            || Err(io::Error::other("task failure")),
-            TaskStatus::Failed,
-        );
+        assert_terminal_cancellation_classification(|| Err(io::Error::other("task failure")), TaskStatus::Failed);
         assert_terminal_cancellation_classification(
             || -> Result<usize, io::Error> { panic!("task panic") },
             TaskStatus::Panicked,
