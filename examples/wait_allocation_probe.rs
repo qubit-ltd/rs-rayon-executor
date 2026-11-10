@@ -36,6 +36,21 @@ use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 use tokio::task::JoinSet;
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_allocation_row_preserves_fraction_and_total() {
+        assert_eq!(
+            super::allocation_row("repeated_pending_poll", 1_000, 1),
+            "allocation_probe,repeated_pending_poll,each,1000,0.001000,1"
+        );
+        assert_eq!(
+            super::allocation_row("first_pending_poll", 1, 0),
+            "allocation_probe,first_pending_poll,each,1,0.000000,0"
+        );
+    }
+}
+
 /// Counts allocations only while a measurement window is enabled.
 struct CountingAllocator;
 
@@ -106,6 +121,14 @@ fn count_all_thread_allocations<T>(operation: impl FnOnce() -> T) -> (T, usize) 
     (result, ALLOCATION_COUNT.load(Ordering::Relaxed))
 }
 
+/// Formats an allocation probe row with the average allocations per operation
+/// and the integer total observed across all samples.
+fn allocation_row(kind: &str, samples: usize, total: usize) -> String {
+    assert!(samples > 0, "allocation samples must be nonzero");
+    let average = total as f64 / samples as f64;
+    format!("allocation_probe,{kind},each,{samples},{average:.6},{total}")
+}
+
 /// Runs the allocation and contention probes in a warmed Tokio runtime.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Builder::new_multi_thread().worker_threads(4).enable_all().build()?;
@@ -142,8 +165,8 @@ fn print_environment() {
     );
 }
 
-/// Separates changed-future creation, repeated pending polls, and notification
-/// costs.
+/// Separates changed-future creation, first and repeated pending polls, and
+/// notification costs.
 fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
     const SAMPLES: usize = 1_000;
     let service = RayonExecutorService::builder()
@@ -170,34 +193,31 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
             drop(changes.changed());
         }
     });
-    println!(
-        "allocation_probe,future_creation,each,{SAMPLES},{},{}",
-        creation_allocations / SAMPLES,
-        creation_allocations
-    );
+    println!("{}", allocation_row("future_creation", SAMPLES, creation_allocations));
 
-    let (_, poll_allocations) = {
+    let (first_poll_allocations, poll_allocations) = {
         let mut pending = pin!(changes.changed());
         let mut context = Context::from_waker(noop_waker);
-        count_thread_allocations(|| {
+        let (_, first) = count_thread_allocations(|| {
+            assert!(matches!(
+                Future::poll(Pin::as_mut(&mut pending), &mut context),
+                Poll::Pending
+            ));
+        });
+        let (_, repeated) = count_thread_allocations(|| {
             for _ in 0..SAMPLES {
                 assert!(matches!(
                     Future::poll(Pin::as_mut(&mut pending), &mut context),
                     Poll::Pending
                 ));
             }
-        })
+        });
+        (first, repeated)
     };
-    println!(
-        "allocation_probe,repeated_pending_poll,each,{SAMPLES},{},{}",
-        poll_allocations / SAMPLES,
-        poll_allocations
-    );
+    println!("{}", allocation_row("first_pending_poll", 1, first_poll_allocations));
+    println!("{}", allocation_row("repeated_pending_poll", SAMPLES, poll_allocations));
     for allocations in measure_notification_allocations(&service)? {
-        println!(
-            "allocation_probe,capacity_notification,each,1,{},{}",
-            allocations, allocations
-        );
+        println!("{}", allocation_row("capacity_notification", 1, allocations));
     }
     service.shutdown();
     Ok(())
