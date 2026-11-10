@@ -17,6 +17,27 @@ use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(120);
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn test_source_development_dependency_matches_manifest() {
+    let root = project_root();
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read package manifest");
+    let requirement = dependency_version(&manifest, "qubit-executor", "Cargo.toml");
+    for (path, heading) in [("README.md", "## Testing"), ("README.zh_CN.md", "## 测试")] {
+        let source = fs::read_to_string(root.join(path)).expect("read README");
+        let section = source
+            .split_once(heading)
+            .expect("README must have a source testing section")
+            .1
+            .split("\n## ")
+            .next()
+            .expect("testing section exists");
+        assert!(
+            section.contains(&format!("`{requirement}`")),
+            "{path}: source testing section must document {requirement}",
+        );
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Block {
     language: String,
