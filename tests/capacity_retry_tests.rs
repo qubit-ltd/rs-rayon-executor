@@ -116,10 +116,7 @@ async fn test_multiple_capacity_waiters_retry_until_accepted() {
         // The controlled worker has completed, so the watch change is already
         // published before producer 0 is allowed to call changed().
         release_tx.send(()).expect("blocker should be released");
-        let blocker_result = tokio::task::spawn_blocking(move || blocker.get())
-            .await
-            .expect("blocker wait should not panic");
-        blocker_result.expect("blocker should complete");
+        blocker.await.expect("blocker should complete");
         tokio::time::timeout(DEADLINE, coordinator_changes.changed())
             .await
             .expect("completion should publish capacity change")
@@ -239,10 +236,7 @@ async fn test_shutdown_releases_saturated_retry_waiters() {
         release_tx
             .send(())
             .expect("blocker should be released after waiters exit");
-        let blocker_result = tokio::task::spawn_blocking(move || blocker.get())
-            .await
-            .expect("blocker wait should not panic");
-        blocker_result.expect("blocker should complete");
+        blocker.await.expect("blocker should complete");
         service.await_termination().await;
         assert_eq!(
             (
