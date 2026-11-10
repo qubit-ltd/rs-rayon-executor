@@ -50,7 +50,7 @@ Add both crates from crates.io. The submission trait is provided by
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -107,7 +107,7 @@ Tokio APIs and therefore requires a Tokio runtime:
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 ```

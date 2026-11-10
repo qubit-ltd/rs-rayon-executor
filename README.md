@@ -17,7 +17,7 @@ Add both crates from crates.io. Submission methods require the executor trait:
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -97,10 +97,11 @@ Documentation example tests also patch this dependency to the sibling source.
     └── rs-rayon-executor/
 
 From this repository, run `./.infra/bin/prepare-local-path-dependencies.sh`
-to prepare missing local path dependencies before the test commands below.
-This preparation may access the network and create sibling checkouts. Inspect
-and preserve existing sibling repository changes first; do not reset or replace
-them. If a compatible checkout is already present, proceed directly to testing.
+to create any missing local path dependency checkouts before the test commands
+below. The script preserves an existing checkout without fetching, resetting, or
+replacing it. Confirm that any existing `rs-executor` checkout uses a compatible
+`qubit-executor` version and API before testing. Creating a missing checkout may
+access the network.
 These source-development prerequisites do not apply to crates.io installation.
 
 ```bash

@@ -15,7 +15,7 @@ Qubit Rayon Executor 为需要处理 CPU 密集型同步任务的 Rust 库提供
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -79,9 +79,10 @@ CPU 密集型任务适合由 Rayon 调度；耗时的阻塞 IO 会占用本应�
     └── rs-rayon-executor/
 
 在本仓库中运行 `./.infra/bin/prepare-local-path-dependencies.sh`，
-准备缺少的本地路径依赖，再执行下列测试命令。该准备过程可能联网并创建相邻
-checkout；请先检查并保留已有相邻仓库的修改，不要重置或替换它们。
-已有兼容 checkout 时可直接测试。这些源码开发前置条件不适用于 crates.io 安装。
+创建缺少的本地路径依赖 checkout，再执行下列测试命令。该脚本会保留已有
+checkout，不会 fetch、重置或替换它。测试前，开发者须确认已有的
+`rs-executor` checkout 使用兼容的 `qubit-executor` 版本和 API。创建缺失的
+checkout 时可能访问网络。这些源码开发前置条件不适用于 crates.io 安装。
 
 ```bash
 # 使用默认 feature 集运行测试

@@ -33,7 +33,7 @@
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-qubit-executor = "0.9"
+qubit-executor = "0.9.1"
 qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 ```
