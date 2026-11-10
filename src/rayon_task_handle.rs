@@ -77,8 +77,16 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// Cloning or dropping the endpoint does not cancel the task. Cancellation
     /// remains best-effort and can only claim work before a Rayon worker starts
-    /// it. If this endpoint claims queued work, captured-value cleanup runs
-    /// synchronously on the calling thread.
+    /// it. If another cancellation path has already claimed the queued work,
+    /// this endpoint can still publish the cancellation result while that
+    /// path performs cleanup. Captured-value cleanup runs synchronously on the
+    /// thread that claimed the work.
+    ///
+    /// A `Cancelled` result can therefore be observable before that cleanup
+    /// finishes. The cancellation path that claimed the work retains cleanup
+    /// ownership, and the task remains counted against service capacity until
+    /// cleanup completes. Once the task has a terminal result, later calls
+    /// report `AlreadyFinished`.
     ///
     /// # Returns
     ///
@@ -94,13 +102,18 @@ impl<R, E> RayonTaskHandle<R, E> {
         let task_id = self.task_id;
         let task = self.inner.cancellation_handle();
         TaskCancellationHandle::new(move || {
-            cancel_task(&state, task_id, || {
-                if state.is_running_task(task_id) {
-                    CancelResult::AlreadyRunning
-                } else {
-                    task.cancel()
-                }
-            })
+            cancel_task(
+                &state,
+                task_id,
+                || task.cancel(),
+                || {
+                    if state.is_running_task(task_id) {
+                        CancelResult::AlreadyRunning
+                    } else {
+                        task.cancel()
+                    }
+                },
+            )
         })
     }
 
@@ -184,17 +197,25 @@ impl<R, E> RayonTaskHandle<R, E> {
     ///
     /// # Returns
     ///
-    /// `Cancelled` when this call claims queued work, `AlreadyRunning` after a
-    /// worker claims it, or `AlreadyFinished` after a terminal result exists.
+    /// `Cancelled` when this call claims queued work or publishes cancellation
+    /// for work already claimed by another cancellation path. `AlreadyRunning`
+    /// means a worker has claimed the task, and `AlreadyFinished` means a
+    /// terminal result already exists. A `Cancelled` result can be observable
+    /// before the claiming thread finishes captured-value cleanup; that thread
+    /// retains cleanup ownership and the task continues to count against
+    /// capacity until cleanup finishes.
     #[inline]
     pub fn cancel(&self) -> CancelResult
     where
         R: Send,
         E: Send,
     {
-        cancel_task(&self.state, self.task_id, || {
-            cancellation_result_for_status(self.status())
-        })
+        cancel_task(
+            &self.state,
+            self.task_id,
+            || self.inner.cancel(),
+            || cancellation_result_for_status(self.status()),
+        )
     }
 }
 
@@ -254,17 +275,26 @@ where
         self.inner.status()
     }
 
-    /// Cancels the task through the owning service state.
+    /// Attempts to cancel the task through the owning service state.
+    ///
+    /// If another cancellation path owns queued-job cleanup, this call can
+    /// publish the tracked cancellation result without taking over or waiting
+    /// for that cleanup.
     ///
     /// # Returns
     ///
-    /// Whether cancellation claimed the queued task or it was already running
-    /// or finished.
+    /// A precise cancellation outcome. `Cancelled` can be returned before the
+    /// cleanup owner finishes dropping captured values; `AlreadyRunning` means
+    /// a worker claimed the task, and `AlreadyFinished` means a terminal result
+    /// already exists.
     #[inline]
     fn cancel(&self) -> CancelResult {
-        cancel_task(&self.state, self.task_id, || {
-            cancellation_result_for_status(self.status())
-        })
+        cancel_task(
+            &self.state,
+            self.task_id,
+            || self.inner.cancel(),
+            || cancellation_result_for_status(self.status()),
+        )
     }
 }
 
@@ -308,20 +338,25 @@ fn cancellation_result_for_status(status: TaskStatus) -> CancelResult {
 ///
 /// # Type Parameters
 ///
-/// * `F` - Fallback used when the queued job is no longer owned by the service.
+/// * `F` - Fallback used when no queued job or cancellation is in progress.
+/// * `G` - Callback used when another path owns queued-job cleanup.
 ///
 /// # Parameters
 ///
 /// * `state` - Service state that owns pending jobs and cancellation counters.
 /// * `task_id` - Identifier of the task whose queued job is cancelled.
-/// * `absent` - Fallback that reports the task's state when no job is queued.
+/// * `in_progress` - Callback that publishes cancellation for a task whose
+///   queued-job cleanup is owned by another cancellation path.
+/// * `absent` - Fallback that reports the task's state when no job is queued
+///   and no cancellation is in progress.
 ///
 /// # Returns
 ///
 /// The observed cancellation outcome.
-fn cancel_task<F>(state: &RayonExecutorServiceState, task_id: u64, absent: F) -> CancelResult
+fn cancel_task<F, G>(state: &RayonExecutorServiceState, task_id: u64, in_progress: G, absent: F) -> CancelResult
 where
     F: FnOnce() -> CancelResult,
+    G: FnOnce() -> CancelResult,
 {
     match state.cancel_pending_task(task_id) {
         CancelDisposition::Owned(job) => {
@@ -331,7 +366,7 @@ where
             state.finish_cancelling(task_id);
             CancelResult::Cancelled
         }
-        CancelDisposition::InProgress => CancelResult::AlreadyFinished,
+        CancelDisposition::InProgress => in_progress(),
         CancelDisposition::Absent => absent(),
     }
 }

@@ -206,13 +206,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 进阶用法
 
-tracked 句柄支持查询状态和取消。任务仍在队列中时取消会成功；已运行的任务报告 `AlreadyRunning`，已完成的任务报告 `AlreadyFinished`。
+tracked 句柄支持查询状态，并可在 Rayon worker 启动任务前尽力取消。任务正在运行时返回 `AlreadyRunning`；已有终态结果时返回 `AlreadyFinished`。如果 `stop` 或另一项取消操作已经认领了排队任务，句柄或取消端点仍能发布 `Cancelled` 结果，同时由原认领方继续清理任务。此时结果可能先于捕获值析构完成而可见；清理责任不会转移，在清理结束前该任务仍占用容量。
 
 如果要将结果句柄转换为 future，请先调用
 `RayonTaskHandle::cancellation_handle()` 并保留返回的
 `TaskCancellationHandle`。克隆句柄会复用 Rayon 队列清理和容量记账路径；丢弃端点
-不会取消任务。取消仍是尽力而为，不能中断已运行的任务。成功取消队列任务时，
-捕获值的清理会在获胜调用所在的线程同步执行。
+不会取消任务。取消仍是尽力而为，不能中断已运行的任务。最先认领排队任务的线程会同步清理捕获值；并发的取消调用既不会接管清理，也不会等待清理结束。结果发布后再次取消会返回 `AlreadyFinished`。
 
 ```rust
 use std::io;

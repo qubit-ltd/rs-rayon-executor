@@ -260,17 +260,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Advanced Usage
 
-Tracked handles support status and cancellation. Cancellation succeeds only
-while a task is queued; a running task reports `AlreadyRunning`, and a completed
-task reports `AlreadyFinished`.
+Tracked handles support status and best-effort cancellation before a Rayon
+worker starts a task. A running task reports `AlreadyRunning`, and a task with a
+terminal result reports `AlreadyFinished`. If `stop` or another cancellation
+call has already claimed a queued task, a handle or cancellation endpoint can
+still publish its `Cancelled` result while that owner is cleaning up the task.
+The result may therefore be available before captured-value destructors finish;
+the original owner keeps cleanup responsibility, and the task continues to
+occupy capacity until cleanup completes.
 
 If the result handle will be consumed into a future, first call
 `RayonTaskHandle::cancellation_handle()` and retain the returned
 `TaskCancellationHandle`. Its clones use the same Rayon queue cleanup and
 capacity accounting path; dropping the endpoint does not cancel. Cancellation
 is best-effort and cannot interrupt running work. Cleanup of captured values
-for a cancelled queued task runs synchronously on the thread that wins
-cancellation.
+for a cancelled queued task runs synchronously on the thread that first claimed
+it. A concurrent cancellation call does not take over or wait for that cleanup.
+Repeated calls after result publication report `AlreadyFinished`.
 
 ```rust
 use std::io;

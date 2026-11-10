@@ -7,17 +7,21 @@
 // =============================================================================
 mod common;
 
+use std::future::IntoFuture;
 use std::io;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
+use std::time::Instant;
 
 use qubit_executor::CancelResult;
 use qubit_executor::TaskExecutionError;
 use qubit_executor::service::ExecutorService;
 use qubit_executor::service::SubmissionError;
+use qubit_executor::task::spi::TrackedTaskHandle;
 use qubit_rayon_executor::RayonExecutorService;
 
 struct DropProbe(Arc<AtomicUsize>);
@@ -86,6 +90,136 @@ fn wait_for_probe(receiver: mpsc::Receiver<()>) {
     receiver
         .recv_timeout(Duration::from_secs(10))
         .expect("capture cleanup should start within timeout");
+}
+
+const STOP_CANCEL_SCENARIO: &str = "RXR_STOP_CANCEL_SCENARIO";
+
+#[test]
+fn test_stop_claimed_task_cancellation_publishes_result_during_cleanup() {
+    let Some(mode) = std::env::var_os(STOP_CANCEL_SCENARIO) else {
+        for mode in ["handle", "trait", "endpoint", "future"] {
+            let executable = std::env::current_exe().expect("test executable path should be available");
+            let mut command = Command::new(executable);
+            command
+                .arg("--exact")
+                .arg("test_stop_claimed_task_cancellation_publishes_result_during_cleanup")
+                .arg("--nocapture")
+                .env(STOP_CANCEL_SCENARIO, mode);
+            let bounded = common::subprocess::run_bounded_output(&mut command, Duration::from_secs(30))
+                .expect("stop cancellation subprocess should run");
+            let stdout = String::from_utf8_lossy(&bounded.output.stdout);
+            let stderr = String::from_utf8_lossy(&bounded.output.stderr);
+            assert!(
+                !bounded.timed_out,
+                "stop cancellation scenario {mode} timed out\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            );
+            assert!(
+                bounded.output.status.success(),
+                "stop cancellation scenario {mode} failed with {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                bounded.output.status
+            );
+            assert!(stdout.contains(&format!("RXR_STOP_CANCEL_COMPLETED:{mode}")));
+        }
+        return;
+    };
+    let mode = mode.to_str().expect("scenario should be UTF-8");
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .task_capacity(3)
+        .build()
+        .expect("service should build");
+    let (running, running_release_tx) = common::helpers::submit_blocking_task(&service);
+    let mut running_release = ReleaseGuard(Some(running_release_tx));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let (probe, entered_rx, mut cleanup_release) = controlled_probe(&drops, false);
+    service
+        .submit_callable({
+            let mut probe = Some(probe);
+            move || {
+                let _probe = probe.take();
+                Ok::<(), io::Error>(())
+            }
+        })
+        .expect("first queued task should be accepted");
+    let executions = Arc::new(AtomicUsize::new(0));
+    let queued = service
+        .submit_tracked_callable({
+            let executions = Arc::clone(&executions);
+            let mut probe = Some(DropProbe(Arc::clone(&drops)));
+            move || {
+                let _probe = probe.take();
+                executions.fetch_add(1, Ordering::SeqCst);
+                Ok::<(), io::Error>(())
+            }
+        })
+        .expect("second queued task should be accepted");
+    let endpoint = queued.cancellation_handle();
+    let endpoint_clone = endpoint.clone();
+    let service_for_stop = service.clone();
+    let stop_thread = std::thread::spawn(move || service_for_stop.stop());
+    wait_for_probe(entered_rx);
+    assert_eq!(queued.status(), qubit_executor::TaskStatus::Pending);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    if mode == "future" {
+        let future = queued.into_future();
+        assert_eq!(endpoint_clone.cancel(), CancelResult::Cancelled);
+        let result = common::helpers::create_runtime().block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), future)
+                .await
+                .expect("cancelled future result should be published")
+        });
+        assert!(matches!(result, Err(TaskExecutionError::Cancelled)));
+    } else {
+        let outcome = match mode {
+            "handle" => queued.cancel(),
+            "trait" => TrackedTaskHandle::cancel(&queued),
+            "endpoint" => endpoint_clone.cancel(),
+            _ => panic!("unknown scenario {mode}"),
+        };
+        assert_eq!(outcome, CancelResult::Cancelled);
+        assert_eq!(queued.status(), qubit_executor::TaskStatus::Cancelled);
+        assert!(queued.is_done());
+        let mut result = queued.try_get();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match result {
+                qubit_executor::TryGet::Ready(value) => {
+                    assert!(matches!(value, Err(TaskExecutionError::Cancelled)));
+                    break;
+                }
+                qubit_executor::TryGet::Pending(handle) if Instant::now() < deadline => {
+                    result = handle.try_get();
+                    std::thread::yield_now();
+                }
+                qubit_executor::TryGet::Pending(_) => panic!("cancelled result should be published"),
+            }
+        }
+    }
+    assert_eq!(endpoint.cancel(), CancelResult::AlreadyFinished);
+    let stats = service.stats();
+    assert_eq!(stats.task_capacity, 3);
+    assert_eq!(stats.queued, 0);
+    assert_eq!(stats.running, 1);
+    assert_eq!(stats.cancelling, 2);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    assert!(!service.wait_termination_timeout(Duration::from_millis(20)));
+
+    cleanup_release.release();
+    let report = stop_thread.join().expect("stop thread should finish");
+    assert_eq!(report.queued, 2);
+    assert_eq!(report.cancelled, 2);
+    assert_eq!(drops.load(Ordering::SeqCst), 2);
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
+    assert_eq!(service.stats().cancelling, 0);
+    running_release.release();
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    running.get().expect("running task should finish");
+    let stats = service.stats();
+    assert_eq!(stats.queued, 0);
+    assert_eq!(stats.running, 0);
+    assert_eq!(stats.cancelling, 0);
+    println!("RXR_STOP_CANCEL_COMPLETED:{mode}");
 }
 
 #[test]
