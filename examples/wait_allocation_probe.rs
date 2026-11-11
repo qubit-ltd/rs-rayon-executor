@@ -64,6 +64,14 @@ mod tests {
     }
 
     #[test]
+    fn test_submission_row_preserves_elapsed_and_fractional_averages() {
+        assert_eq!(
+            super::submission_row("saturated_rejection", 1_000, 2_000, 3),
+            "submission_probe,saturated_rejection,1000,2000,2.00,3,0.003000"
+        );
+    }
+
+    #[test]
     fn test_real_child_fixture() {
         match std::env::var(CHILD_MODE).as_deref() {
             Ok("success") => {}
@@ -218,6 +226,16 @@ fn allocation_row(kind: &str, samples: usize, total: usize) -> String {
     format!("allocation_probe,{kind},each,{samples},{average:.6},{total}")
 }
 
+/// Formats a submission cost row with elapsed time and per-attempt averages.
+fn submission_row(kind: &str, samples: usize, elapsed_ns: u128, allocations: usize) -> String {
+    assert!(samples > 0, "submission samples must be nonzero");
+    format!(
+        "submission_probe,{kind},{samples},{elapsed_ns},{:.2},{allocations},{:.6}",
+        elapsed_ns as f64 / samples as f64,
+        allocations as f64 / samples as f64
+    )
+}
+
 /// Supervises the measured child process or runs the measured probe child.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(PROBE_CHILD_ARGUMENT)) {
@@ -239,6 +257,7 @@ fn run_probe() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Builder::new_multi_thread().worker_threads(4).enable_all().build()?;
     print_environment();
     measure_wait_allocations()?;
+    measure_saturated_rejections()?;
     measure_contention(&runtime)?;
     Ok(())
 }
@@ -268,6 +287,7 @@ fn print_environment() {
     println!(
         "throughput_probe,kind,producers,work_units,round,tasks,elapsed_ns,tasks_per_second,p50_submit_ns,p95_submit_ns"
     );
+    println!("submission_probe,kind,samples,elapsed_ns,ns_per_attempt,allocations,allocations_per_attempt");
 }
 
 /// Separates changed-future creation, first and repeated pending polls, and
@@ -330,6 +350,128 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
     }
     service.shutdown();
     Ok(())
+}
+
+/// Measures saturated rejection/recovery separately from successful admission.
+fn measure_saturated_rejections() -> Result<(), Box<dyn std::error::Error>> {
+    const SAMPLES: usize = 1_000;
+    eprintln!("probe_progress,stage=saturated_rejection");
+    let service = RayonExecutorService::builder()
+        .num_threads(1)
+        .task_capacity(1)
+        .build()?;
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let blocker = service
+        .try_submit_callable(move || {
+            started_tx.send(()).expect("report blocker start");
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("release blocker");
+            Ok::<(), io::Error>(())
+        })
+        .map_err(|rejected| rejected.into_parts().0)?;
+    if let Err(error) = started_rx.recv_timeout(Duration::from_secs(10)) {
+        drop(release_tx);
+        let _ = blocker.get();
+        return Err(error.into());
+    }
+
+    let warmup_callable = || Ok::<(), io::Error>(());
+    match service.try_submit_callable(warmup_callable) {
+        Err(rejected) => {
+            let (reason, callable) = rejected.into_parts();
+            assert_eq!(reason, SubmissionError::Saturated);
+            let _ = callable;
+        }
+        Ok(handle) => {
+            drop(handle);
+            panic!("warmup submission unexpectedly succeeded while blocker occupied capacity");
+        }
+    }
+
+    // Reuse the callable recovered from every rejection. Invoke it after the
+    // measurement window to verify it remains intact without skewing the cost.
+    let invoked = Arc::new(AtomicUsize::new(0));
+    let invocation_marker = Arc::clone(&invoked);
+    let mut callable = Some(move || {
+        invocation_marker.fetch_add(1, Ordering::Relaxed);
+        Ok::<(), io::Error>(())
+    });
+    let (rejection_elapsed_ns, rejection_allocations) = count_thread_allocations(|| {
+        let started = Instant::now();
+        for _ in 0..SAMPLES {
+            let attempt = callable.take().expect("rejected callable is recovered");
+            match service.try_submit_callable(attempt) {
+                Err(rejected) => {
+                    let (reason, returned) = rejected.into_parts();
+                    assert_eq!(reason, SubmissionError::Saturated);
+                    callable = Some(returned);
+                }
+                Ok(handle) => {
+                    drop(handle);
+                    panic!("submission unexpectedly succeeded while blocker occupied capacity");
+                }
+            }
+        }
+        started.elapsed().as_nanos()
+    });
+    let returned = callable.take().expect("last rejected callable is recovered");
+    assert_eq!(invoked.load(Ordering::Relaxed), 0, "rejected callable must not run");
+    let _ = release_tx.send(());
+    blocker.get()?;
+    returned()?;
+    assert_eq!(
+        invoked.load(Ordering::Relaxed),
+        1,
+        "recovered callable should remain callable"
+    );
+    wait_for_accounting_release(&service, Duration::from_secs(10))?;
+
+    // The service is free again; this one-attempt control measures successful
+    // admission on the submitting thread, excluding task completion.
+    let accepted_callable = || Ok::<(), io::Error>(());
+    let ((accepted_elapsed_ns, accepted_result), accepted_allocations) = count_thread_allocations(|| {
+        let started = Instant::now();
+        let result = service.try_submit_callable(accepted_callable);
+        (started.elapsed().as_nanos(), result)
+    });
+    let accepted_handle = accepted_result.map_err(|rejected| rejected.into_parts().0)?;
+    accepted_handle.get()?;
+
+    println!(
+        "{}",
+        submission_row(
+            "saturated_rejection",
+            SAMPLES,
+            rejection_elapsed_ns,
+            rejection_allocations
+        )
+    );
+    println!(
+        "{}",
+        submission_row("successful_admission", 1, accepted_elapsed_ns, accepted_allocations)
+    );
+    service.shutdown();
+    Ok(())
+}
+
+/// Waits for service-side accounting to release completed work.
+fn wait_for_accounting_release(service: &RayonExecutorService, timeout: Duration) -> Result<(), io::Error> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let stats = service.stats();
+        if stats.queued == 0 && stats.running == 0 && stats.cancelling == 0 {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("service accounting did not reach zero before the deadline: {stats:?}"),
+            ));
+        }
+        thread::yield_now();
+    }
 }
 
 /// Measures allocations from task completion through observing a capacity
