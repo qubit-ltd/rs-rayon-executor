@@ -12,3 +12,9 @@ mod documentation_examples;
 fn test_documentation_examples_compile_and_run() {
     documentation_examples::check_all_documents();
 }
+
+#[test]
+#[ignore = "requires crates.io access; run explicitly for release acceptance"]
+fn test_registry_documentation_examples_compile_and_run() {
+    documentation_examples::check_all_registry_documents();
+}

@@ -8,3 +8,4 @@
 mod runner_tests;
 
 pub(crate) use runner_tests::check_all_documents;
+pub(crate) use runner_tests::check_all_registry_documents;

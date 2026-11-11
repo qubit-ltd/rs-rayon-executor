@@ -15,7 +15,7 @@ Qubit Rayon Executor 为需要处理 CPU 密集型同步任务的 Rust 库提供
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -83,6 +83,8 @@ CPU 密集型任务适合由 Rayon 调度；耗时的阻塞 IO 会占用本应�
 checkout，不会 fetch、重置或替换它。测试前，开发者须确认已有的
 `rs-executor` checkout 使用兼容的 `qubit-executor` 版本和 API。创建缺失的
 checkout 时可能访问网络。这些源码开发前置条件不适用于 crates.io 安装。
+普通文档测试命令使用上述 `Source` 配置。若要验证已发布的 crates.io
+依赖组合，请显式运行被忽略的 Registry smoke test：
 
 ```bash
 # 使用默认 feature 集运行测试
@@ -91,12 +93,21 @@ cargo test
 # 使用项目声明的全部 feature 运行测试
 cargo test --all-features
 
+# 编译并运行文档中的 crates.io 依赖组合（需要网络）
+cargo test --test documentation_examples_tests test_registry_documentation_examples_compile_and_run -- --ignored --exact --nocapture
+
 # 运行项目 CI 检查
 ./.infra/bin/ci-check.sh
 
 # 检查代码覆盖率
 ./.infra/bin/coverage.sh
 ```
+
+Registry smoke test 使用独立 fixture、锁文件和构建目录，不使用本地路径或
+Cargo 覆盖配置。输出会记录精确解析出的 `qubit-rayon-executor` 与
+`qubit-executor` 版本及 features。Cargo 会将文档中的版本要求解析为最新兼容的
+已发布版本，因此验证的是该解析组合，不代表所有允许的历史版本。指定版本尚未
+发布时，此测试无法验证该候选；当前 checkout 仍由常规源码测试和 package 检查覆盖。
 
 ## 许可证
 

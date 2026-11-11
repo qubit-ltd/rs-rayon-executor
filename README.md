@@ -17,7 +17,7 @@ Add both crates from crates.io. Submission methods require the executor trait:
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = "0.9"
 ```
 
@@ -103,6 +103,9 @@ replacing it. Confirm that any existing `rs-executor` checkout uses a compatible
 `qubit-executor` version and API before testing. Creating a missing checkout may
 access the network.
 These source-development prerequisites do not apply to crates.io installation.
+The normal documentation test command below uses this `Source` setup. To check
+the published crates.io combination instead, run the ignored registry smoke
+test explicitly:
 
 ```bash
 # Run tests with the default feature set
@@ -111,12 +114,24 @@ cargo test
 # Run tests with all declared features
 cargo test --all-features
 
+# Compile and run the documented crates.io dependency combination (network required)
+cargo test --test documentation_examples_tests test_registry_documentation_examples_compile_and_run -- --ignored --exact --nocapture
+
 # Project CI checks
 ./.infra/bin/ci-check.sh
 
 # Check code coverage
 ./.infra/bin/coverage.sh
 ```
+
+The registry smoke test uses an isolated fixture, lockfile, and build target; it
+does not use local paths or Cargo overrides. Its output records the exact
+resolved `qubit-rayon-executor` and `qubit-executor` versions and features.
+Cargo resolves the documented version requirements to the latest compatible
+published versions, so this checks that resolved combination rather than every
+allowed historical version. Before a requested crate version is published, this
+test cannot validate that candidate; the normal source tests and package checks
+cover the current checkout.
 
 ## License
 

@@ -33,9 +33,18 @@
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = "0.9"
 ```
+
+从源码 checkout 验证下方示例可在仓库根目录运行
+`cargo test --test documentation_examples_tests`。验证已发布的 crates.io
+依赖组合时，请显式运行
+`cargo test --test documentation_examples_tests test_registry_documentation_examples_compile_and_run -- --ignored --exact --nocapture`。
+此 smoke test 需要访问 registry 网络，并使用独立 fixture、锁文件和构建目录。
+输出记录精确解析的 crate 版本及 features；Cargo 会在 manifest 版本范围内选择最新的
+兼容已发布版本，因此结论仅适用于这些版本。该 Registry 测试无法验证尚未发布的
+候选版本；当前 checkout 使用源码测试和 package 检查验证。
 
 ### 核心工作流
 
@@ -77,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 ```

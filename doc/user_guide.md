@@ -50,9 +50,20 @@ Add both crates from crates.io. The submission trait is provided by
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = "0.9"
 ```
+
+The examples below can be checked against the current source checkout with
+`cargo test --test documentation_examples_tests`. To check the published
+crates.io combination, run
+`cargo test --test documentation_examples_tests test_registry_documentation_examples_compile_and_run -- --ignored --exact --nocapture`
+from the repository root. This explicit smoke test needs registry network
+access and uses its own fixture, lockfile, and build directory. It reports the
+exact resolved crate versions and features: Cargo selects the latest compatible
+published versions allowed by the manifest, so the result applies to those
+versions only. An unpublished candidate cannot be verified by this registry
+test; use the source tests and package checks for the current checkout.
 
 ### Core Workflow
 
@@ -107,7 +118,7 @@ Tokio APIs and therefore requires a Tokio runtime:
 
 ```toml
 [dependencies]
-qubit-executor = "0.9.1"
+qubit-executor = "0.9.0"
 qubit-rayon-executor = { version = "0.9", features = ["async-wait"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
 ```

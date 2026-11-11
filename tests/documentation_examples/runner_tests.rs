@@ -56,6 +56,12 @@ enum Role {
     TrackedCancellation,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DependencySource {
+    Source,
+    Registry,
+}
+
 impl Role {
     fn name(self) -> &'static str {
         match self {
@@ -224,7 +230,7 @@ fn test_capacity_retry_original_main_compile_error_is_reported() {
     let document = parse_document("doc/user_guide.md", &source).expect("parse English user guide");
     let block = document.rust[&Role::CapacityRetry].clone();
     let cache = BuildCache::new();
-    let fixture = Fixture::new(true, &cache);
+    let fixture = Fixture::new(true, &cache, DependencySource::Source);
     fixture.write_manifest(document.path, &document.blocks, true);
 
     let malformed = capacity_retry_with_invalid_main(&block);
@@ -241,6 +247,14 @@ fn test_capacity_retry_original_main_compile_error_is_reported() {
 }
 
 pub(crate) fn check_all_documents() {
+    check_all(DependencySource::Source);
+}
+
+pub(crate) fn check_all_registry_documents() {
+    check_all(DependencySource::Registry);
+}
+
+fn check_all(source: DependencySource) {
     let cache = BuildCache::new();
     let paths = [
         "README.md",
@@ -265,18 +279,21 @@ pub(crate) fn check_all_documents() {
         docs[3].rust.keys().collect::<Vec<_>>()
     );
     for doc in docs {
-        check_document(doc, &cache);
+        check_document(doc, &cache, source);
     }
 }
 
-fn check_document(doc: Document, cache: &BuildCache) {
+fn check_document(doc: Document, cache: &BuildCache, source: DependencySource) {
     for (role, block) in doc.rust {
         let asynchronous = matches!(role, Role::StopHelper | Role::CapacityRetry);
-        let fixture = Fixture::new(asynchronous, cache);
+        let mut fixture = Fixture::new(asynchronous, cache, source);
         fixture.write_manifest(doc.path, &doc.blocks, asynchronous);
         if role == Role::CapacityRetry {
             let original = format!("example_{}_original", role as usize);
             fixture.write_bin(&original, &block.code);
+            if source == DependencySource::Registry {
+                fixture.verify_registry_resolution(doc.path, role, &block.heading, block.line);
+            }
             let original_path = fixture.root.join("src/bin").join(format!("{original}.rs"));
             let written = fs::read(&original_path).expect("read original documentation program");
             assert_eq!(
@@ -291,6 +308,7 @@ fn check_document(doc: Document, cache: &BuildCache) {
             let saturated = format!("example_{}_saturated", role as usize);
             fixture.write_bin(&saturated, &capacity_retry_saturated_source(&block));
             fixture.run_cargo(doc.path, role, &block.heading, block.line, &saturated);
+            fixture.cleanup();
             continue;
         }
         let source = if role == Role::StopHelper {
@@ -303,7 +321,11 @@ fn check_document(doc: Document, cache: &BuildCache) {
         };
         let bin = format!("example_{}", role as usize);
         fixture.write_bin(&bin, &source);
+        if fixture.source == DependencySource::Registry {
+            fixture.verify_registry_resolution(doc.path, role, &block.heading, block.line);
+        }
         fixture.run_cargo(doc.path, role, &block.heading, block.line, &bin);
+        fixture.cleanup();
     }
 }
 
@@ -323,6 +345,8 @@ struct Fixture {
     root: PathBuf,
     target: PathBuf,
     asynchronous: bool,
+    source: DependencySource,
+    preserve_on_drop: bool,
 }
 
 struct BuildCache {
@@ -358,7 +382,7 @@ impl Drop for BuildCache {
 }
 
 impl Fixture {
-    fn new(asynchronous: bool, cache: &BuildCache) -> Self {
+    fn new(asynchronous: bool, cache: &BuildCache, source: DependencySource) -> Self {
         let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("rre-doc-examples-{}-{id}", std::process::id()));
         fs::create_dir_all(root.join("src/bin")).expect("create temporary documentation fixture");
@@ -366,6 +390,8 @@ impl Fixture {
             target: cache.target.clone(),
             root,
             asynchronous,
+            source,
+            preserve_on_drop: source == DependencySource::Registry,
         }
     }
 
@@ -387,14 +413,13 @@ impl Fixture {
         let version_source = async_config.map_or(&install.code, |block| &block.code);
         let version = dependency_version(version_source, "qubit-rayon-executor", source_path);
         let executor_version = dependency_version(version_source, "qubit-executor", source_path);
-        let features = if let Some(documented) = async_config {
+        let features = documented_dependency_features(version_source, "qubit-rayon-executor", source_path);
+        if asynchronous {
+            let documented = async_config.expect("async configuration was required above");
             if !documented.code.contains("rt-multi-thread") {
                 panic!("{source_path}: Tokio runtime feature is absent from async configuration");
             }
-            ", features = [\"async-wait\"]"
-        } else {
-            ""
-        };
+        }
         let tokio = if asynchronous {
             let config = blocks
                 .iter()
@@ -408,13 +433,9 @@ impl Fixture {
         } else {
             ""
         };
-        let manifest = format!(
-            "[package]\nname = \"doc-example-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nqubit-executor = {{ version = \"{executor_version}\" }}\nqubit-rayon-executor = {{ version = \"{version}\", path = \"{}\"{features} }}\n{tokio}\n[patch.crates-io]\nqubit-executor = {{ path = \"{}\" }}\n",
-            project_root().display(),
-            project_root().join("../rs-executor").display()
-        );
+        let manifest = fixture_manifest(&version, &executor_version, &features, tokio, self.source);
         fs::write(self.root.join("Cargo.toml"), manifest).expect("write fixture manifest");
-        let _ = self.asynchronous;
+        assert_eq!(self.asynchronous, asynchronous);
     }
 
     fn write_bin(&self, name: &str, source: &str) {
@@ -431,6 +452,61 @@ impl Fixture {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    }
+
+    fn verify_registry_resolution(&self, document: &str, role: Role, heading: &str, line: usize) {
+        let mut command = Command::new("cargo");
+        command
+            .arg("metadata")
+            .arg("--format-version")
+            .arg("1")
+            .arg("--manifest-path")
+            .arg(self.root.join("Cargo.toml"));
+        let output = run_bounded(command, document, role, heading, line);
+        if !output.status.success() {
+            panic!(
+                "{document}:{line} ({heading}) {} registry metadata failed\nfixture: {}\nstdout:\n{}\nstderr:\n{}",
+                role.name(),
+                self.root.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{document}:{line} ({heading}) {} invalid cargo metadata JSON: {error}\nfixture: {}",
+                role.name(),
+                self.root.display()
+            )
+        });
+        let expected = [("qubit-rayon-executor", None), ("qubit-executor", None)];
+        let packages = registry_packages(&metadata, &expected).unwrap_or_else(|error| {
+            panic!(
+                "{document}:{line} ({heading}) {} registry resolution rejected: {error}\nfixture: {}",
+                role.name(),
+                self.root.display()
+            )
+        });
+        eprintln!(
+            "registry resolution {document}:{line} ({}) fixture={} {}",
+            role.name(),
+            self.root.display(),
+            packages
+                .iter()
+                .map(|(name, version, features)| format!("{name} {version} features={features:?}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
+    fn cleanup(&mut self) {
+        self.preserve_on_drop = false;
+        fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
+            panic!(
+                "remove successful documentation fixture {}: {error}",
+                self.root.display()
+            )
+        });
     }
 
     fn run_cargo_output(
@@ -460,7 +536,9 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        if !self.preserve_on_drop {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 }
 
@@ -508,6 +586,152 @@ fn dependency_version(toml: &str, name: &str, document: &str) -> String {
     panic!("{document}: documented TOML has no {name} version")
 }
 
+fn documented_dependency_features(toml: &str, name: &str, document: &str) -> Vec<String> {
+    for line in toml.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != name {
+            continue;
+        }
+        let Some(features) = value.split_once("features").map(|(_, rest)| rest) else {
+            return Vec::new();
+        };
+        let array = features
+            .split_once('[')
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once(']').map(|(array, _)| array))
+            .unwrap_or_else(|| panic!("{document}: documented {name} features must be a TOML array"));
+        return array
+            .split(',')
+            .map(str::trim)
+            .filter(|feature| !feature.is_empty())
+            .map(|feature| {
+                let feature = feature.trim_matches('"');
+                if feature.is_empty() || feature.contains('"') {
+                    panic!("{document}: invalid documented {name} feature {feature:?}");
+                }
+                feature.to_owned()
+            })
+            .collect();
+    }
+    panic!("{document}: documented TOML has no {name} dependency")
+}
+
+fn fixture_manifest(
+    version: &str,
+    executor_version: &str,
+    features: &[String],
+    tokio: &str,
+    source: DependencySource,
+) -> String {
+    let features = if features.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", features = [{}]",
+            features
+                .iter()
+                .map(|feature| format!("\"{feature}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let (rayon, patch) = match source {
+        DependencySource::Source => (
+            format!(
+                "qubit-rayon-executor = {{ version = \"{version}\", path = \"{}\"{features} }}",
+                project_root().display()
+            ),
+            format!(
+                "[patch.crates-io]\nqubit-executor = {{ path = \"{}\" }}\n",
+                project_root().join("../rs-executor").display()
+            ),
+        ),
+        DependencySource::Registry => (
+            format!("qubit-rayon-executor = {{ version = \"{version}\"{features} }}"),
+            String::new(),
+        ),
+    };
+    format!(
+        "[package]\nname = \"doc-example-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nqubit-executor = \"{executor_version}\"\n{rayon}\n{tokio}\n{patch}"
+    )
+}
+
+fn registry_packages(
+    metadata: &serde_json::Value,
+    expected: &[(&str, Option<&str>)],
+) -> Result<Vec<(String, String, Vec<String>)>, String> {
+    let packages = metadata["packages"].as_array().ok_or("metadata packages are missing")?;
+    let nodes = metadata["resolve"]["nodes"]
+        .as_array()
+        .ok_or("metadata resolve nodes are missing")?;
+    let root_id = metadata["resolve"]["root"]
+        .as_str()
+        .ok_or("metadata resolve root is missing")?;
+    let root_node = nodes
+        .iter()
+        .find(|node| node["id"].as_str() == Some(root_id))
+        .ok_or("fixture root node is missing")?;
+    let mut resolved = Vec::new();
+    for (name, expected_version) in expected {
+        let metadata_name = name.replace('-', "_");
+        let dependency = root_node["deps"]
+            .as_array()
+            .and_then(|deps| {
+                deps.iter()
+                    .find(|dependency| dependency["name"].as_str() == Some(metadata_name.as_str()))
+            })
+            .ok_or_else(|| format!("fixture does not resolve required dependency {name}"))?;
+        let package_id = dependency["pkg"]
+            .as_str()
+            .ok_or_else(|| format!("{name} resolved package id is missing"))?;
+        let package = packages
+            .iter()
+            .find(|package| package["id"].as_str() == Some(package_id))
+            .ok_or_else(|| format!("metadata package for {name} is missing"))?;
+        if package["name"].as_str() != Some(*name) {
+            return Err(format!(
+                "resolved package {package_id} is named {:?}, expected {name}",
+                package["name"].as_str()
+            ));
+        }
+        let source = package["source"]
+            .as_str()
+            .ok_or_else(|| format!("{name} {package_id} has no registry source"))?;
+        if source != "registry+https://github.com/rust-lang/crates.io-index" {
+            return Err(format!("{name} resolved from {source}, expected crates.io registry"));
+        }
+        let version = package["version"]
+            .as_str()
+            .ok_or_else(|| format!("{name} resolved version is missing"))?;
+        if let Some(expected_version) = expected_version
+            && version != *expected_version
+        {
+            return Err(format!(
+                "{name} resolved version {version}, expected {expected_version}"
+            ));
+        }
+        let node = nodes
+            .iter()
+            .find(|node| node["id"].as_str() == Some(package_id))
+            .ok_or_else(|| format!("resolve node for {name} {version} is missing"))?;
+        let features = node["features"]
+            .as_array()
+            .ok_or_else(|| format!("features for {name} {version} are missing"))?
+            .iter()
+            .map(|feature| {
+                feature
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("invalid feature for {name} {version}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        resolved.push(((*name).to_owned(), version.to_owned(), features));
+    }
+    Ok(resolved)
+}
+
 fn project_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -518,6 +742,7 @@ mod subprocess_error_tests {
     use std::process::Command;
 
     use super::BuildCache;
+    use super::DependencySource;
     use super::Fixture;
     use super::Role;
     use super::run_bounded;
@@ -558,8 +783,8 @@ mod subprocess_error_tests {
         let cache = BuildCache::new();
         let cache_root = cache.root.clone();
         let target = cache.target.clone();
-        let first = Fixture::new(false, &cache);
-        let second = Fixture::new(true, &cache);
+        let first = Fixture::new(false, &cache, DependencySource::Source);
+        let second = Fixture::new(true, &cache, DependencySource::Source);
         let first_root = first.root.clone();
         let second_root = second.root.clone();
         assert_ne!(first_root, second_root);
@@ -575,5 +800,105 @@ mod subprocess_error_tests {
         assert!(!second_root.exists());
         drop(cache);
         assert!(!cache_root.exists());
+    }
+}
+
+#[cfg(test)]
+mod dependency_source_tests {
+    use super::DependencySource;
+    use super::documented_dependency_features;
+    use super::fixture_manifest;
+    use super::registry_packages;
+
+    fn metadata(source: &str, version: &str) -> serde_json::Value {
+        serde_json::json!({
+            "resolve": {
+                "root": "fixture 0.1.0 (path+file:///tmp/fixture)",
+                "nodes": [
+                    {"id":"fixture 0.1.0 (path+file:///tmp/fixture)","deps":[
+                        {"name":"qubit_rayon_executor","pkg":"qubit-rayon-executor 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)"},
+                        {"name":"qubit_executor","pkg":"qubit-executor 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)"}
+                    ],"features":[]},
+                    {"id":"qubit-rayon-executor 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)","features":["async-wait"]},
+                    {"id":"qubit-executor 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)","features":[]}
+                ]
+            },
+            "packages": [
+                {"id":"qubit-rayon-executor 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)","name":"qubit-rayon-executor","version":version,"source":source},
+                {"id":"qubit-executor 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)","name":"qubit-executor","version":"0.9.2","source":"registry+https://github.com/rust-lang/crates.io-index"}
+            ]
+        })
+    }
+
+    #[test]
+    fn test_source_manifest_keeps_local_path_and_executor_patch() {
+        let manifest = fixture_manifest("0.9", "^0.9.2", &[], "", DependencySource::Source);
+        assert!(manifest.contains("qubit-rayon-executor = { version = \"0.9\", path ="));
+        assert!(manifest.contains("[patch.crates-io]\nqubit-executor = { path ="));
+    }
+
+    #[test]
+    fn test_registry_manifest_keeps_versions_features_and_tokio_without_overrides() {
+        let doc_toml =
+            "qubit-executor = \"0.9.2\"\nqubit-rayon-executor = { version = \"0.9\", features = [\"async-wait\"] }\n";
+        let features = documented_dependency_features(doc_toml, "qubit-rayon-executor", "guide.md");
+        assert_eq!(features, ["async-wait"]);
+        let manifest = fixture_manifest(
+            "0.9",
+            "^0.9.2",
+            &features,
+            "tokio = { version = \"1.54\", features = [\"macros\", \"rt-multi-thread\"] }",
+            DependencySource::Registry,
+        );
+        assert!(manifest.contains("qubit-executor = \"^0.9.2\""));
+        assert!(manifest.contains("qubit-rayon-executor = { version = \"0.9\", features = [\"async-wait\"] }"));
+        assert!(manifest.contains("tokio = { version = \"1.54\", features = [\"macros\", \"rt-multi-thread\"] }"));
+        assert!(!manifest.contains("path ="));
+        assert!(!manifest.contains("[patch"));
+        assert!(!manifest.contains("[replace"));
+
+        let changed_doc_toml =
+            "qubit-rayon-executor = { version = \"0.9\", features = [\"async-wait\", \"custom-feature\"] }";
+        let changed_features = documented_dependency_features(changed_doc_toml, "qubit-rayon-executor", "guide.md");
+        let changed_manifest = fixture_manifest("0.9", "^0.9.2", &changed_features, "", DependencySource::Registry);
+        assert!(changed_manifest.contains("features = [\"async-wait\", \"custom-feature\"]"));
+    }
+
+    #[test]
+    fn test_registry_metadata_accepts_only_crates_io_packages_and_expected_version() {
+        let valid = metadata("registry+https://github.com/rust-lang/crates.io-index", "0.9.0");
+        let resolved = registry_packages(&valid, &[("qubit-rayon-executor", None), ("qubit-executor", None)])
+            .expect("crates.io dependencies should pass");
+        assert_eq!(resolved[0].1, "0.9.0");
+        assert_eq!(resolved[0].2, ["async-wait"]);
+
+        let path = metadata("path+file:///tmp/rs-rayon-executor", "0.9.0");
+        assert!(
+            registry_packages(&path, &[("qubit-rayon-executor", None), ("qubit-executor", None)])
+                .expect_err("path package should be rejected")
+                .contains("path+file")
+        );
+        let custom_registry = metadata("registry+https://github.com/rust-lang/crates.io-index.example", "0.9.0");
+        assert!(
+            registry_packages(
+                &custom_registry,
+                &[("qubit-rayon-executor", None), ("qubit-executor", None)]
+            )
+            .expect_err("a custom registry must not pass as crates.io")
+            .contains("registry+https://github.com/rust-lang/crates.io-index.example")
+        );
+        assert!(
+            registry_packages(&valid, &[("qubit-rayon-executor", None), ("missing-executor", None)])
+                .expect_err("missing package should be rejected")
+                .contains("missing-executor")
+        );
+        assert!(
+            registry_packages(
+                &valid,
+                &[("qubit-rayon-executor", Some("0.9.1")), ("qubit-executor", None)]
+            )
+            .expect_err("a version different from the requested acceptance version must fail")
+            .contains("resolved version 0.9.0, expected 0.9.1")
+        );
     }
 }
