@@ -419,6 +419,19 @@ impl ExecutorService for RayonExecutorService {
     /// # Returns
     ///
     /// A report containing counts for running, queued, and cancelled tasks.
+    /// The counters describe this call's observation and queue ownership
+    /// transfer under the service state lock, not a snapshot taken when this
+    /// method returns or cumulative lifecycle totals. `queued` is the number
+    /// removed from the queue by this call; `cancelled` counts those same jobs
+    /// claimed for pre-start cancellation. `running` counts jobs claimed by
+    /// workers whose running accounting has not yet been released; their user
+    /// code need not have started, and their results may already be terminal.
+    /// Jobs already being cleaned up by another cancellation path are
+    /// excluded. This call completes its own claimed cleanup before returning,
+    /// but does not wait for cleanup owned by other callers. A concurrent
+    /// second stop may report zero queued and cancelled jobs while the first
+    /// caller is still cleaning them up. Use termination waiting for
+    /// service-wide completion.
     fn stop(&self) -> StopReport {
         let (report, jobs) = self.state.stop();
         for (task_id, job) in jobs {

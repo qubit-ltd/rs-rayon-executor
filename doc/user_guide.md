@@ -335,6 +335,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Call `stop` to abandon queued work. Its `StopReport` records queued, running,
 and cancelled tasks, but it cannot forcibly interrupt a running Rayon task.
+These counters describe this call's observation and transfer of queue
+ownership under the service state lock; they are neither a return-time snapshot
+nor cumulative lifecycle totals. `queued` counts tasks removed from the queue
+by this call, and `cancelled` counts those same tasks claimed for pre-start
+cancellation. `running` counts tasks claimed by workers whose running
+accounting has not yet been released. Their user code may not have started, and
+their results may already be terminal. Tasks another cancellation path has
+already claimed for cleanup are excluded. `stop` finishes cleanup for the tasks
+it claims before returning, but does not wait for cleanup owned by other calls.
+A concurrent second `stop` can therefore report zero queued and cancelled
+tasks while the first call is still cleaning them up. Use termination waiting
+when you need service-wide completion.
 
 ## Errors and Diagnostics
 

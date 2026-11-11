@@ -281,22 +281,13 @@ fn test_rayon_executor_service_stop_is_safe_when_called_concurrently() {
     assert!(service.is_terminated());
 }
 
-#[tokio::test]
-async fn test_rayon_executor_service_await_termination_waits_before_shutdown() {
-    let service = RayonExecutorService::new().expect("service should be created");
-    let waiter_service = service.clone();
-    let waiter = tokio::task::spawn_blocking(move || {
-        assert!(waiter_service.wait_termination_timeout(Duration::from_secs(10)));
-    });
-
-    tokio::task::yield_now().await;
-    assert!(!waiter.is_finished());
-
+#[test]
+fn test_rayon_executor_service_wait_termination_timeout_waits_for_shutdown() {
+    let service = create_single_worker_service();
+    assert!(!service.wait_termination_timeout(Duration::from_millis(20)));
     service.shutdown();
-    tokio::time::timeout(Duration::from_secs(10), waiter)
-        .await
-        .expect("termination waiter should finish within timeout")
-        .expect("termination waiter should not panic");
+    assert!(service.wait_termination_timeout(Duration::from_secs(10)));
+    assert!(service.is_terminated());
 }
 
 #[test]
