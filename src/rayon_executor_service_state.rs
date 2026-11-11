@@ -53,7 +53,9 @@ impl RayonExecutorServiceState {
     ///
     /// # Parameters
     ///
-    /// * `task_capacity` - Maximum accepted tasks that have not terminated.
+    /// * `task_capacity` - Maximum accepted tasks whose service-side accounting
+    ///   has not been released, including tasks whose terminal result may
+    ///   already be observable.
     /// * `num_threads` - Maximum worker closures scheduled concurrently.
     ///
     /// # Returns
@@ -467,7 +469,8 @@ impl RayonExecutorServiceState {
     }
 }
 
-/// Returns the number of accepted tasks that have not reached a terminal state.
+/// Returns the number of accepted tasks whose service-side accounting has not
+/// yet been released.
 ///
 /// # Parameters
 ///
@@ -475,7 +478,8 @@ impl RayonExecutorServiceState {
 ///
 /// # Returns
 ///
-/// The combined number of queued, running, and cancelling accepted tasks.
+/// The combined number of queued, running, and cancelling accepted tasks,
+/// including tasks whose terminal result is already observable.
 fn occupied(inner: &RayonExecutorServiceInner) -> usize {
     inner.queue.len() + inner.running + inner.cancelling.len()
 }

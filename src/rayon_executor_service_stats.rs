@@ -12,7 +12,9 @@ use qubit_executor::service::ExecutorServiceLifecycle;
 /// Current queue and worker counts for a Rayon executor service.
 ///
 /// The fields are sampled while holding the service state mutex and describe
-/// one consistent service-state snapshot.
+/// one consistent service-state snapshot. A snapshot is not a reservation of
+/// capacity, and an observable terminal result does not mean service-side
+/// accounting has been released.
 ///
 /// # Examples
 ///
@@ -30,11 +32,16 @@ use qubit_executor::service::ExecutorServiceLifecycle;
 pub struct RayonExecutorServiceStats {
     /// Observed service lifecycle.
     pub lifecycle: ExecutorServiceLifecycle,
-    /// Maximum number of accepted tasks that have not reached a terminal state.
+    /// Maximum accepted tasks whose service-side execution or cancellation
+    /// accounting has not yet been released. Queued, running, and cancelling
+    /// tasks all consume this capacity, even if a terminal result is
+    /// observable.
     pub task_capacity: usize,
     /// Accepted tasks waiting for a Rayon worker.
     pub queued: usize,
-    /// Tasks currently running on Rayon workers.
+    /// Tasks claimed by Rayon workers whose running accounting has not yet
+    /// been released. A task may not have invoked user code yet, or may already
+    /// have published its terminal result.
     pub running: usize,
     /// Tasks removed from the queue whose cancellation is still being
     /// processed.

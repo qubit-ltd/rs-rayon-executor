@@ -16,7 +16,8 @@ use crate::queued_job::QueuedJob;
 pub(crate) struct RayonExecutorServiceInner {
     /// Current lifecycle used to accept or reject new submissions.
     pub(crate) lifecycle: ExecutorServiceLifecycle,
-    /// Maximum number of accepted tasks that have not reached a terminal state.
+    /// Maximum accepted tasks whose service-side execution or cancellation
+    /// accounting has not yet been released.
     pub(crate) task_capacity: usize,
     /// Maximum number of Rayon worker closures scheduled at once.
     pub(crate) num_threads: usize,

@@ -40,7 +40,9 @@ pub struct RayonExecutorServiceBuilder {
     thread_name_prefix: String,
     /// Optional worker stack size in bytes.
     stack_size: Option<usize>,
-    /// Maximum number of accepted tasks that have not reached a terminal state.
+    /// Maximum number of accepted tasks whose service-side accounting has not
+    /// been released. Queued, running, and cancelling tasks consume this
+    /// capacity, even if a terminal result is observable.
     task_capacity: usize,
 }
 
@@ -90,11 +92,14 @@ impl RayonExecutorServiceBuilder {
         self
     }
 
-    /// Sets the maximum number of accepted unfinished tasks.
+    /// Sets the maximum number of accepted tasks whose service-side accounting
+    /// has not been released.
     ///
     /// # Parameters
     ///
-    /// * `task_capacity` - Maximum queued, running, or cancelling tasks.
+    /// * `task_capacity` - Maximum accepted tasks whose service-side accounting
+    ///   has not been released, including queued, running, and cancelling tasks
+    ///   whose terminal result may already be observable.
     ///
     /// # Returns
     ///
