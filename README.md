@@ -88,8 +88,8 @@ see the [API documentation](https://docs.rs/qubit-rayon-executor) or the
 ## Testing
 
 For source development, keep a compatible `rs-executor` checkout next to this
-repository. The current path dependency requires `qubit-executor` `^0.9.2`
-(0.9.2 or a compatible later 0.9 release; 0.9.0 and 0.9.1 do not satisfy it).
+repository. The current path dependency requires `qubit-executor` `^0.9`
+(0.9.0 or a compatible later 0.9 release).
 Documentation example tests also patch this dependency to the sibling source.
 
     parent/
