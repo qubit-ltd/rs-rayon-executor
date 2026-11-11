@@ -68,7 +68,12 @@ fn test_rayon_executor_service_builder_sets_thread_options() {
 }
 
 #[test]
-fn test_rayon_executor_service_uses_pool_thread_count_for_dispatch() {
+// This checks completion with configured pool sizes and drained service counts.
+// `test_concurrent_producers_respect_capacity` covers two-worker concurrency
+// with its startup barrier and `running == 2`; bounded queue behavior is
+// covered
+// by `test_bounded_queue_rejects_when_full_and_reuses_cancelled_capacity`.
+fn test_rayon_executor_service_completes_work_with_configured_thread_counts() {
     for num_threads in [1, 2] {
         let service = RayonExecutorService::builder()
             .num_threads(num_threads)
