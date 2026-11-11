@@ -46,6 +46,9 @@ mod rayon_executor_service_stats;
 mod rayon_task_handle;
 mod rejected_task;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(feature = "async-wait")]
 pub use capacity_changes::CapacityChanges;
 #[cfg(feature = "async-wait")]
