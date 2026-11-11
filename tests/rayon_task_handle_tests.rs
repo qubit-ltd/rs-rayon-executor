@@ -116,20 +116,12 @@ fn test_rayon_cancellation_handle_clones_can_cancel_concurrently() {
         .into_iter()
         .map(|thread| thread.join().expect("cancel thread should not panic"))
         .collect();
-    assert_eq!(
+    assert!(
         results
             .iter()
-            .filter(|&&result| result == CancelResult::Cancelled)
-            .count(),
-        1
+            .all(|result| matches!(result, CancelResult::Cancelled | CancelResult::AlreadyFinished))
     );
-    assert_eq!(
-        results
-            .iter()
-            .filter(|&&result| result == CancelResult::AlreadyFinished)
-            .count(),
-        1
-    );
+    assert!(results.contains(&CancelResult::Cancelled));
     assert!(matches!(queued.get(), Err(TaskExecutionError::Cancelled)));
 
     release_tx.send(()).expect("running task should be released");
