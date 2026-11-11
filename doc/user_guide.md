@@ -167,6 +167,15 @@ hints: another producer may take the capacity first, and the API makes no FIFO,
 fairness, or finite-wait guarantee. Handle `Shutdown` and a closed
 notification channel as terminal outcomes:
 
+A parent task occupies accepted-task capacity until its execution accounting is
+released. With two workers and `task_capacity` set to one, an already accepted
+parent that synchronously drives a future waiting for a child submission to
+the same service can prevent that submission from ever being accepted, even
+while another worker is idle. An asynchronous capacity wait does not release
+the parent's capacity. Keep submission and
+result orchestration outside the pool; adding workers alone does not break
+this dependency cycle.
+
 ```rust
 use std::io;
 use std::error::Error;
@@ -351,7 +360,12 @@ termination from completing.
 
 Capacity includes queued, running, and cancellation-in-progress tasks, not just
 visible queue items. Collecting a result does not release capacity; task
-completion or cancellation cleanup does. If `wait_termination` does not return, call `shutdown` or
+completion or cancellation cleanup does. For example, with two workers and
+`task_capacity` one, an already accepted parent synchronously driving a future
+that waits for the same service to accept its child can block that admission
+while the other worker is idle. An async capacity
+wait does not release the parent's capacity; orchestrate submissions and
+results outside the pool. If `wait_termination` does not return, call `shutdown` or
 `stop` and check for blocked accepted tasks. Do not synchronously wait for a
 second task from the same saturated pool; use Rayon `join`/`scope` or async
 coordination. For long-running CPU work needing interruption, implement

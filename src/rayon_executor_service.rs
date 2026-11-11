@@ -51,6 +51,14 @@ use crate::rayon_task_handle::RayonTaskHandle;
 /// also not synchronously wait for its own service to terminate: termination
 /// includes that task finishing. Coordinate results and shutdown outside the
 /// pool, or use Rayon `join` or `scope` for suitable computations.
+/// A running parent also occupies accepted-task capacity until its execution
+/// accounting is released. With two workers and `task_capacity` set to one,
+/// an already accepted parent synchronously driving a future that waits for
+/// the same service to accept a child can prevent that admission even while
+/// another worker is idle. An asynchronous capacity wait does not release
+/// the parent's capacity; keep submission and result
+/// orchestration outside the pool. See the capacity-wait guidance in the user
+/// guide for retry behavior and notifications.
 ///
 /// Clones share the same pool and lifecycle. Calling `shutdown` or `stop` on
 /// any clone ends admission for every clone. Dropping a clone does not shut
