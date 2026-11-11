@@ -442,21 +442,32 @@ impl ExecutorService for RayonExecutorService {
         self.state.is_not_running()
     }
 
-    /// Returns whether every accepted task has reached a terminal state after
-    /// shutdown or stop.
+    /// Returns whether admission has stopped and all accepted tasks' service-
+    /// side execution or cancellation accounting has been released.
+    ///
+    /// A task result may already be terminal while its service-side accounting
+    /// remains occupied, including during cancellation cleanup. Termination
+    /// does not guarantee that idle scheduled closures have exited or that
+    /// Rayon worker threads have been joined.
     ///
     /// # Returns
     ///
-    /// `true` when all accepted tasks are terminal after shutdown or stop.
+    /// `true` when admission has stopped and all accepted tasks' service-side
+    /// execution or cancellation accounting has been released.
     #[inline]
     fn is_terminated(&self) -> bool {
         self.lifecycle() == ExecutorServiceLifecycle::Terminated
     }
 
-    /// Blocks until all accepted tasks reach a terminal state.
+    /// Blocks until admission has stopped and all accepted tasks' service-side
+    /// execution or cancellation accounting has been released.
     ///
     /// Calling this before shutdown or stop blocks until a lifecycle transition
-    /// is requested and all accepted work subsequently finishes or cancels.
+    /// is requested and all accepted work subsequently finishes or its
+    /// cancellation cleanup and service-side accounting are released. A task
+    /// result may be terminal before that accounting is released. This does not
+    /// guarantee that idle scheduled closures have exited or Rayon worker
+    /// threads have been joined.
     ///
     /// Do not call this from an accepted task running on this service.
     /// Termination includes that task finishing, so waiting here creates a
@@ -465,7 +476,14 @@ impl ExecutorService for RayonExecutorService {
         self.state.wait_for_termination();
     }
 
-    /// Waits at most `timeout` for all accepted tasks to terminate.
+    /// Waits at most `timeout` for admission to stop and all accepted tasks'
+    /// service-side execution or cancellation accounting to be released.
+    ///
+    /// A task result may already be terminal while its service-side accounting
+    /// remains occupied, including during cancellation cleanup. Termination
+    /// does not guarantee that idle scheduled closures have exited or that
+    /// Rayon worker threads have been joined. A zero timeout probes the current
+    /// termination condition without blocking.
     ///
     /// Calling this from a task running on this service cannot observe normal
     /// termination before that task finishes. It can block the worker until

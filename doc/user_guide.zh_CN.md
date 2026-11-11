@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`submit_callable` 成功只表示服务接纳了任务，并不表示 callable 已经成功完成。请从 `TaskHandle` 取得结果，以观察任务自己的错误或 panic。`shutdown` 会让已接纳任务完成，`wait_termination` 则等待它们进入终态。
+`submit_callable` 成功只表示服务接纳了任务，并不表示 callable 已经成功完成。请从 `TaskHandle` 取得结果，以观察任务自己的错误或 panic。`shutdown` 停止接纳新任务并允许已接纳工作继续，本身不等待完成。`wait_termination` 等待停止接纳，且所有已接纳任务的服务侧执行或取消清理记账均已释放。结果可能已经进入终态，但相关记账仍然占用容量，包括取消清理尚未结束的情况。服务终止不保证空闲调度闭包均已退出，也不保证 Rayon 工作线程已经 join。
 
 `ExecutorService::submit_callable` 即使返回 `Saturated` 或 `Shutdown` 也会消费 callable。对于只能使用一次的任务值，可使用本类型固有方法 `RayonExecutorService::try_submit_callable`：接纳失败时，它会在 `RejectedTask<C>` 中归还同一个 callable。调用 `into_parts()` 可取回原因和 callable；丢弃拒绝值时 callable 按常规析构。本 crate 的 `RejectedTask` 与 Tokio executor 中同名类型彼此独立。
 

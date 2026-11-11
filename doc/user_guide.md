@@ -98,8 +98,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Successful submission means that the service accepted the task, not that the
 callable succeeded. Inspect the `TaskHandle` result for a task error or panic.
-`shutdown` finishes accepted work, while `wait_termination` waits for it to
-reach a terminal state.
+`shutdown` stops admission and allows accepted work to continue; it does not
+wait for completion. `wait_termination` waits until admission has stopped and
+all accepted tasks' service-side execution or cancellation accounting has been
+released. Results may already be terminal while that accounting remains
+occupied, including during cancellation cleanup. Termination does not
+guarantee that idle scheduled closures have exited or that Rayon worker
+threads have been joined.
 
 The `ExecutorService::submit_callable` method consumes its callable even when
 submission returns `Saturated` or `Shutdown`. For one-shot task values, use the
