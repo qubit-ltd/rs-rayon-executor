@@ -17,6 +17,7 @@ use std::io;
 use std::pin::Pin;
 use std::pin::pin;
 use std::process::Command;
+use std::process::ExitStatus;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
@@ -36,8 +37,20 @@ use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 use tokio::task::JoinSet;
 
+#[path = "wait_allocation_probe/watchdog.rs"]
+mod watchdog;
+
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+    use std::process::Stdio;
+    use std::thread;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    const CHILD_MODE: &str = "QUBIT_ALLOCATION_PROBE_FIXTURE";
+    const DRIVER_MODE: &str = "QUBIT_ALLOCATION_PROBE_DRIVER";
+
     #[test]
     fn test_allocation_row_preserves_fraction_and_total() {
         assert_eq!(
@@ -49,7 +62,83 @@ mod tests {
             "allocation_probe,first_pending_poll,each,1,0.000000,0"
         );
     }
+
+    #[test]
+    fn test_real_child_fixture() {
+        match std::env::var(CHILD_MODE).as_deref() {
+            Ok("success") => {}
+            Ok("failure") => std::process::exit(7),
+            Ok("hang") => thread::sleep(Duration::from_secs(10)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_real_child_processes_are_supervised() {
+        if std::env::var_os(DRIVER_MODE).is_some() {
+            exercise_real_children();
+            return;
+        }
+
+        let mut child = Command::new(std::env::current_exe().expect("test executable path"));
+        child
+            .args([
+                "--exact",
+                "tests::test_real_child_processes_are_supervised",
+                "--nocapture",
+            ])
+            .env(DRIVER_MODE, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut process = child.spawn().expect("outer test driver should start");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = process.try_wait().expect("outer driver status should be available") {
+                assert!(status.success(), "real child driver should pass: {status}");
+                return;
+            }
+            if Instant::now() >= deadline {
+                process.kill().expect("hung outer driver should be killed");
+                let status = process.wait().expect("outer driver should be reaped");
+                panic!("real child driver exceeded its independent 15 second deadline: {status}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn exercise_real_children() {
+        use super::watchdog;
+
+        let executable = std::env::current_exe().expect("test executable path");
+        let mut success = Command::new(&executable);
+        success
+            .args(["--exact", "tests::test_real_child_fixture", "--nocapture"])
+            .env(CHILD_MODE, "success");
+        assert!(
+            watchdog::run(&mut success, Duration::from_secs(2))
+                .expect("success fixture should run")
+                .success()
+        );
+
+        let mut failure = Command::new(&executable);
+        failure
+            .args(["--exact", "tests::test_real_child_fixture", "--nocapture"])
+            .env(CHILD_MODE, "failure");
+        let error =
+            watchdog::run(&mut failure, Duration::from_secs(2)).expect_err("failure fixture should fail supervision");
+        assert!(error.contains("exited unsuccessfully"));
+
+        let mut hanging = Command::new(executable);
+        hanging
+            .args(["--exact", "tests::test_real_child_fixture", "--nocapture"])
+            .env(CHILD_MODE, "hang");
+        let error = watchdog::run(&mut hanging, Duration::from_millis(50)).expect_err("hang fixture should time out");
+        assert!(error.contains("timed out"), "watchdog should explain timeout: {error}");
+    }
 }
+
+const PROBE_CHILD_ARGUMENT: &str = "--probe-child";
+const PROBE_BUDGET: Duration = Duration::from_secs(600);
 
 /// Counts allocations only while a measurement window is enabled.
 struct CountingAllocator;
@@ -129,8 +218,24 @@ fn allocation_row(kind: &str, samples: usize, total: usize) -> String {
     format!("allocation_probe,{kind},each,{samples},{average:.6},{total}")
 }
 
-/// Runs the allocation and contention probes in a warmed Tokio runtime.
+/// Supervises the measured child process or runs the measured probe child.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(PROBE_CHILD_ARGUMENT)) {
+        return run_probe();
+    }
+
+    let executable = std::env::current_exe()?;
+    let mut command = Command::new(executable);
+    command.arg(PROBE_CHILD_ARGUMENT);
+    let status: ExitStatus = watchdog::run(&mut command, PROBE_BUDGET).map_err(std::io::Error::other)?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!("probe child exited unsuccessfully: {status}")).into());
+    }
+    Ok(())
+}
+
+/// Runs the allocation and contention probes in a warmed Tokio runtime.
+fn run_probe() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Builder::new_multi_thread().worker_threads(4).enable_all().build()?;
     print_environment();
     measure_wait_allocations()?;
@@ -169,6 +274,7 @@ fn print_environment() {
 /// notification costs.
 fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
     const SAMPLES: usize = 1_000;
+    eprintln!("probe_progress,stage=wait_allocations");
     let service = RayonExecutorService::builder()
         .num_threads(1)
         .task_capacity(1)
@@ -188,6 +294,7 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
     }
+    eprintln!("probe_progress,stage=future_creation");
     let (_, creation_allocations) = count_thread_allocations(|| {
         for _ in 0..SAMPLES {
             drop(changes.changed());
@@ -198,12 +305,14 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
     let (first_poll_allocations, poll_allocations) = {
         let mut pending = pin!(changes.changed());
         let mut context = Context::from_waker(noop_waker);
+        eprintln!("probe_progress,stage=first_pending_poll");
         let (_, first) = count_thread_allocations(|| {
             assert!(matches!(
                 Future::poll(Pin::as_mut(&mut pending), &mut context),
                 Poll::Pending
             ));
         });
+        eprintln!("probe_progress,stage=repeated_pending_poll");
         let (_, repeated) = count_thread_allocations(|| {
             for _ in 0..SAMPLES {
                 assert!(matches!(
@@ -227,7 +336,8 @@ fn measure_wait_allocations() -> Result<(), Box<dyn std::error::Error>> {
 /// notification.
 fn measure_notification_allocations(service: &RayonExecutorService) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
     let mut samples = Vec::with_capacity(5);
-    for _ in 0..5 {
+    for round in 1..=5 {
+        eprintln!("probe_progress,stage=capacity_notification,round={round}");
         let mut changes = service.capacity_changes();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -287,6 +397,7 @@ fn run_contention_case(
     round: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const TASKS_PER_PRODUCER: usize = 1_000;
+    eprintln!("probe_progress,stage=contention,producers={producers},work_units={work_units},round={round}");
     let service = Arc::new(
         RayonExecutorService::builder()
             .num_threads(4)
