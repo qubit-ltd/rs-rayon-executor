@@ -579,7 +579,7 @@ fn dependency_version(toml: &str, name: &str, document: &str) -> String {
             } else {
                 version_value
             };
-            let version = version_value.trim_matches('"').trim();
+            let version = version_value.trim().trim_end_matches('}').trim().trim_matches('"');
             return version.to_owned();
         }
     }
@@ -643,10 +643,7 @@ fn fixture_manifest(
                 "qubit-rayon-executor = {{ version = \"{version}\", path = \"{}\"{features} }}",
                 project_root().display()
             ),
-            format!(
-                "[patch.crates-io]\nqubit-executor = {{ path = \"{}\" }}\n",
-                project_root().join("../rs-executor").display()
-            ),
+            String::new(),
         ),
         DependencySource::Registry => (
             format!("qubit-rayon-executor = {{ version = \"{version}\"{features} }}"),
@@ -831,10 +828,10 @@ mod dependency_source_tests {
     }
 
     #[test]
-    fn test_source_manifest_keeps_local_path_and_executor_patch() {
+    fn test_source_manifest_uses_local_rayon_and_registry_executor() {
         let manifest = fixture_manifest("0.9", "^0.9.2", &[], "", DependencySource::Source);
         assert!(manifest.contains("qubit-rayon-executor = { version = \"0.9\", path ="));
-        assert!(manifest.contains("[patch.crates-io]\nqubit-executor = { path ="));
+        assert!(!manifest.contains("[patch.crates-io]"));
     }
 
     #[test]

@@ -87,22 +87,7 @@ see the [API documentation](https://docs.rs/qubit-rayon-executor) or the
 
 ## Testing
 
-For source development, keep a compatible `rs-executor` checkout next to this
-repository. The current path dependency requires `qubit-executor` `^0.9`
-(0.9.0 or a compatible later 0.9 release).
-Documentation example tests also patch this dependency to the sibling source.
-
-    parent/
-    ├── rs-executor/
-    └── rs-rayon-executor/
-
-From this repository, run `./.infra/bin/prepare-local-path-dependencies.sh`
-to create any missing local path dependency checkouts before the test commands
-below. The script preserves an existing checkout without fetching, resetting, or
-replacing it. Confirm that any existing `rs-executor` checkout uses a compatible
-`qubit-executor` version and API before testing. Creating a missing checkout may
-access the network.
-These source-development prerequisites do not apply to crates.io installation.
+For source development, Cargo resolves `qubit-executor` `^0.9` from crates.io.
 The normal documentation test command below uses this `Source` setup. To check
 the published crates.io combination instead, run the ignored registry smoke
 test explicitly:

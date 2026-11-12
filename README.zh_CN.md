@@ -70,19 +70,7 @@ CPU 密集型任务适合由 Rayon 调度；耗时的阻塞 IO 会占用本应�
 
 ## 测试
 
-从源码参与开发时，请在本仓库旁保留兼容的 `rs-executor` checkout。
-当前路径依赖要求 `qubit-executor` `^0.9`，即 0.9.0 或后续兼容的
-0.9 版本。文档示例测试也会将该依赖 patch 到相邻源码。
-
-    parent/
-    ├── rs-executor/
-    └── rs-rayon-executor/
-
-在本仓库中运行 `./.infra/bin/prepare-local-path-dependencies.sh`，
-创建缺少的本地路径依赖 checkout，再执行下列测试命令。该脚本会保留已有
-checkout，不会 fetch、重置或替换它。测试前，开发者须确认已有的
-`rs-executor` checkout 使用兼容的 `qubit-executor` 版本和 API。创建缺失的
-checkout 时可能访问网络。这些源码开发前置条件不适用于 crates.io 安装。
+从源码参与开发时，Cargo 从 crates.io 解析 `qubit-executor` `^0.9`。
 普通文档测试命令使用上述 `Source` 配置。若要验证已发布的 crates.io
 依赖组合，请显式运行被忽略的 Registry smoke test：
 
